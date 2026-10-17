@@ -7,7 +7,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.zai.zcode.feature.uuremote.UuRemoteDeepLinkHub
 import com.zai.zcode.ui.AppNavHost
-import com.zai.zcode.ui.theme.ZcodeTheme
+// 修复：ui.theme 包内是旧壳主题 ZcodemobileTheme；feature 模块统一用 core/design 的
+// ZcodeTheme，宿主也用它保证全 App 主题一致
+import com.zai.zcode.core.design.ZcodeTheme
 import javax.inject.Inject
 
 /**
