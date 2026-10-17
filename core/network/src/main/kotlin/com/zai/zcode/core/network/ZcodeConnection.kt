@@ -108,6 +108,8 @@ class ZcodeConnection(
     suspend fun authorizedHttpGet(baseUrl: String, path: String, token: String?): JsonObject? =
         withContext(Dispatchers.IO) {
             val url = baseUrl.toHttpUrl().resolve(path)  // path 形如 /api/server-info
+                // 修复依据：HttpUrl.resolve 对非法 path 返回 null，编译器要求可空处理
+                ?: return@withContext null
                 .newBuilder()
                 .apply {
                     if (token != null) addQueryParameter(TOKEN_QUERY, token)
@@ -217,13 +219,14 @@ class ZcodeConnection(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 ZLog.w(TAG, "ws failure: ${t.message}")
                 wsChannel.close()
-                maybeReconnect(t.message ?: "ws failure")
+                // WS 回调在 OkHttp 线程非协程上下文：重连含 delay，转投 scope 串行处理
+                scope.launch { maybeReconnect(t.message ?: "ws failure") }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 ZLog.i(TAG, "ws closed: $code $reason")
                 wsChannel.close()
-                maybeReconnect("ws closed $code")
+                scope.launch { maybeReconnect("ws closed $code") }
             }
         })
     }
