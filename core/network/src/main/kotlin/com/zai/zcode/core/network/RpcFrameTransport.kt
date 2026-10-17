@@ -187,9 +187,18 @@ class RpcFrameTransport(
                 ZLog.w(TAG, "message $ms size mismatch")
             } else if (assembly.checksum == null || crc32WireBytes(message) == assembly.checksum) {
                 scope.launch { _messages.emit(message) }
+                // 修复依据(真机日志"bridge degraded: rpc-transport-fault"每~30-45s 周期性
+                // 出现):桌面 acknowledged relay 协议(webRemoteControlAcknowledgedRelayProtocol
+                // 的 rawIdentityMatches)对每个入站 rpc-frame-ack 做 identity 严格校验,
+                // 要求 bridgeSessionId+bridgeGeneration+recoveryId 三元组逐字段相等,
+                // 不匹配则静默丢弃。原 ack 只带 bridgeSessionId → 桌面永远收不到下行
+                // 确认 → ackGraceExceeded(45s grace) → terminal degrade → bridge 重开,
+                // 表现为会话列表/聊天快照反复断流。ack 必须原样携带两个 identity 字段。
                 sendPayload(buildJsonObject {
                     put("zcode_type", "rpc-frame-ack")
                     put("bridgeSessionId", bridgeSessionId)
+                    bridgeGeneration?.let { put("bridgeGeneration", it) }
+                    recoveryId?.let { put("recoveryId", it) }
                     put("ackMessageSeq", ms)
                 })
             } else {

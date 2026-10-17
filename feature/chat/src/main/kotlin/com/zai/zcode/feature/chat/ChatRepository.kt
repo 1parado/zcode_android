@@ -50,7 +50,10 @@ class ChatRepository(
     private val _ui = MutableStateFlow(ChatUi())
     val ui: StateFlow<ChatUi> = _ui.asStateFlow()
 
-    private var subscribed = false
+    // 修复依据(真机日志 19:30 bridge degrade→reopen 后"加载会话…"永挂):openBridge
+    // 重建全新 ZcodeProtocolV4 实例,布尔 subscribed 把新实例当已订阅,重连后
+    // conversation 订阅永不重发。改为按协议实例身份判定。
+    private var attachedProtocol: ZcodeProtocolV4? = null
     private var lastSeq: Long = 0
     private var lastLogEpoch: String? = null
 
@@ -58,7 +61,7 @@ class ChatRepository(
         scope.launch {
             connection.protocol.collect { p ->
                 if (p == null) {
-                    subscribed = false
+                    attachedProtocol = null
                     return@collect
                 }
                 attach(p)
@@ -67,8 +70,8 @@ class ChatRepository(
     }
 
     private fun attach(p: ZcodeProtocolV4) {
-        if (subscribed) return
-        subscribed = true
+        if (attachedProtocol === p) return
+        attachedProtocol = p
         p.onConversationFrame = { frame, _ -> if (reducer.apply(frame)) publish() }
         scope.launch {
             try {
@@ -82,7 +85,7 @@ class ChatRepository(
                 ZLog.i(TAG, "subscribed conversation/$sessionId")
             } catch (e: Exception) {
                 ZLog.w(TAG, "subscribe failed: ${e.message}")
-                subscribed = false
+                attachedProtocol = null
             }
         }
     }

@@ -41,6 +41,10 @@ class SessionsRepository(
     private val _workspacePath = MutableStateFlow<String?>(null)
     val workspacePath: StateFlow<String?> = _workspacePath.asStateFlow()
 
+    // 修复依据(真机日志 19:30 bridge degrade→reopen 后"加载会话…"永挂):openBridge
+    // 会创建全新 ZcodeProtocolV4 实例,原 subscribedWorkspace 布尔式判定把新实例当成
+    // 已订阅,导致重连后会话列表订阅永不重发。改为按协议实例身份+workspace 联合判定。
+    private var subscribedProtocol: ZcodeProtocolV4? = null
     private var subscribedWorkspace: String? = null
 
     fun start() {
@@ -56,7 +60,8 @@ class SessionsRepository(
         if (_workspacePath.value == path) return
         _workspacePath.value = path
         reducer.reset()
-        subscribedWorkspace = null // 触发重订阅
+        subscribedProtocol = null // 触发重订阅
+        subscribedWorkspace = null
         connection.protocol.value?.let { subscribe(it, path) }
     }
 
@@ -68,12 +73,15 @@ class SessionsRepository(
 
     private fun onProtocolClosed() {
         reducer.reset()
+        subscribedProtocol = null
         subscribedWorkspace = null
         // 保留 _sessions 显示旧数据 + 顶栏显示重连状态
     }
 
     private fun subscribe(p: ZcodeProtocolV4, ws: String) {
-        if (subscribedWorkspace == ws) return
+        // 新协议实例(bridge reopen 重建)必须重订阅,即使 workspace 未变
+        if (subscribedProtocol === p && subscribedWorkspace == ws) return
+        subscribedProtocol = p
         subscribedWorkspace = ws
         scope.launch {
             try {
@@ -81,6 +89,7 @@ class SessionsRepository(
                 ZLog.i(TAG, "subscribed sessions-index for $ws")
             } catch (e: Exception) {
                 ZLog.w(TAG, "sessions-index subscribe failed: ${e.message}")
+                subscribedProtocol = null
                 subscribedWorkspace = null
             }
         }
