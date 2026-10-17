@@ -49,7 +49,12 @@ class SessionsRepository(
         val hasPendingInteraction: Boolean get() = permissionCount + userInputCount > 0
     }
 
-    private val reducer = SessionsIndexReducer()
+    private val reducer = SessionsIndexReducer().apply {
+        onSeqGap = { resyncSessionsIndex() }
+    }
+    /** resync 单飞：并发空洞帧只打一次重同步请求。 */
+    private val resyncMutex = kotlinx.coroutines.sync.Mutex()
+    private var sessionsSubscriptionId: String? = null
     // 本地 pinned/seen 注入后的合并视图（wire 列表 + 本地状态）
     private val _sessions = MutableStateFlow<List<SessionItem>>(emptyList())
     val sessions: StateFlow<List<SessionItem>> = _sessions.asStateFlow()
@@ -82,6 +87,14 @@ class SessionsRepository(
     private val _workspacePath = MutableStateFlow<String?>(null)
     val workspacePath: StateFlow<String?> = _workspacePath.asStateFlow()
 
+    /**
+     * 当前 workspace 的 identity（远程链路贯穿传递，AGENTS.md「Workspace Identity」）。
+     * 修复依据（真机 v0.2.14）：以前只持有 path，subscribe 依赖 ZcodeProtocolV4 门面
+     * 的 boundWorkspaceIdentity 兜底。兜底在「selectWorkspace 换了 workspace 但
+     * protocol 实例未变」时仍指向旧 identity，订阅登记与 fan-out 目标错位。
+     */
+    @Volatile private var workspaceIdentity: String? = null
+
     // 修复依据(真机日志 19:30 bridge degrade→reopen 后"加载会话…"永挂):openBridge
     // 会创建全新 ZcodeProtocolV4 实例,原 subscribedWorkspace 布尔式判定把新实例当成
     // 已订阅,导致重连后会话列表订阅永不重发。改为按协议实例身份+workspace 联合判定。
@@ -97,9 +110,10 @@ class SessionsRepository(
     }
 
     /** workspacePath 确定后调用；只在变化时重订阅。 */
-    fun setWorkspace(path: String) {
-        if (_workspacePath.value == path) return
+    fun setWorkspace(path: String, identity: String? = null) {
+        if (_workspacePath.value == path && workspaceIdentity == identity) return
         _workspacePath.value = path
+        workspaceIdentity = identity
         reducer.reset()
         subscribedProtocol = null // 触发重订阅
         subscribedWorkspace = null
@@ -116,6 +130,7 @@ class SessionsRepository(
         reducer.reset()
         subscribedProtocol = null
         subscribedWorkspace = null
+        sessionsSubscriptionId = null
         // 保留 _sessions 显示旧数据 + 顶栏显示重连状态
     }
 
@@ -126,12 +141,43 @@ class SessionsRepository(
         subscribedWorkspace = ws
         scope.launch {
             try {
-                p.subscribeSessionsIndex(ws)
+                val ack = p.subscribeSessionsIndex(ws, workspaceIdentity)
+                sessionsSubscriptionId = ack.subscriptionId
                 ZLog.i(TAG, "subscribed sessions-index for $ws")
             } catch (e: Exception) {
                 ZLog.w(TAG, "sessions-index subscribe failed: ${e.message}")
                 subscribedProtocol = null
                 subscribedWorkspace = null
+            }
+        }
+    }
+
+    /**
+     * seq 空洞 → resync 重放（[SessionsIndexReducer.onSeqGap]）。
+     * 修复依据（真机 v0.2.15）：检测到空洞只是第一步，必须有重放入口，否则列表
+     * 会安静地停在少条目的状态。单飞 + 节流：同一时刻只跑一次，失败后由下一次
+     * 空洞帧再触发，避免网络抖动时打出风暴。
+     */
+    private fun resyncSessionsIndex() {
+        val p = connection.protocol.value ?: return
+        val subId = sessionsSubscriptionId ?: return
+        val ws = _workspacePath.value ?: return
+        if (!resyncMutex.tryLock()) return
+        scope.launch {
+            try {
+                val snap = reducer.snapshot()
+                p.resyncSessionsIndex(
+                    subscriptionId = subId,
+                    workspacePath = ws,
+                    workspaceIdentity = workspaceIdentity,
+                    baseLogEpoch = snap.logEpoch,
+                    baseSeq = snap.seq,
+                )
+                ZLog.i(TAG, "sessions-index resync requested (seq=${snap.seq})")
+            } catch (e: Exception) {
+                ZLog.w(TAG, "sessions-index resync failed: ${e.message}")
+            } finally {
+                resyncMutex.unlock()
             }
         }
     }

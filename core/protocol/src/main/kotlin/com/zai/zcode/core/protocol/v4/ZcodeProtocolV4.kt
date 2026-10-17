@@ -211,19 +211,93 @@ class ZcodeProtocolV4(
         return SubscribeAck(raw = resultAsObject(result))
     }
 
-    /** 退订（conversation 与 sessions-index 共用 unsubscribeConversationV4 形状）。 */
-    suspend fun unsubscribe(subscriptionId: String, workspacePath: String, workspaceIdentity: String? = null) {
+    /**
+     * 退订（conversation 与 sessions-index 共用 unsubscribeConversationV4 形状）。
+     *
+     * 修复依据（真机 v0.2.15）：zemote _SubscriptionBase 给每条订阅配独立的
+     * unsubscribe/resync 方法名（conversation.dart:1290-1304），服务端
+     * zcodeAgentService.ts:6412/6417 确有 sessions-index 专用的一对。用 conversation
+     * 的退订去关 sessions-index 订阅，route 前缀（conversation/ vs sessions-index/）
+     * 不匹配，服务端会退订到错误的路由上。
+     */
+    suspend fun unsubscribe(
+        subscriptionId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        sessionsIndex: Boolean = false,
+    ) {
         channel.request(
             V4.CHANNEL_ZCODE_AGENT,
-            V4.METHOD_CONVERSATION_UNSUBSCRIBE,
+            if (sessionsIndex) V4.METHOD_SESSIONS_INDEX_UNSUBSCRIBE
+            else V4.METHOD_CONVERSATION_UNSUBSCRIBE,
             buildJsonObject {
                 put("workspacePath", workspacePath)
                 if (!(workspaceIdentity ?: boundWorkspaceIdentity).isNullOrBlank()) {
                     put("workspaceIdentity", workspaceIdentity ?: boundWorkspaceIdentity)
                 }
                 put("subscriptionId", subscriptionId)
-            }
+                if (sessionsIndex) put("runtimePolicy", "existing-only")
+            },
         )
+    }
+
+    /**
+     * sessions-index 重同步（resyncSessionsIndexV4）：seq 空洞后请求服务端重放。
+     *
+     * 修复依据（真机 v0.2.15「列表偶发缺失」）：空洞检测只是发现，没有重放入口就
+     * 等于发现后什么都不做。对齐 zemote conversation.dart:1293（方法名）与
+     * :1301（args 只带 runtimePolicy，不带 forceSnapshot）。
+     */
+    suspend fun resyncSessionsIndex(
+        subscriptionId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        baseLogEpoch: String? = null,
+        baseSeq: Long? = null,
+        timeoutMs: Long = SUBSCRIBE_TIMEOUT_MS,
+    ): SubscribeAck {
+        val result = channel.request(
+            V4.CHANNEL_ZCODE_AGENT,
+            V4.METHOD_SESSIONS_INDEX_RESYNC,
+            buildResyncParams(
+                subscriptionId = subscriptionId,
+                workspacePath = workspacePath,
+                workspaceIdentity = workspaceIdentity ?: boundWorkspaceIdentity,
+                baseLogEpoch = baseLogEpoch,
+                baseSeq = baseSeq,
+                runtimePolicy = "existing-only",
+            ),
+            timeoutMs,
+        )
+        return SubscribeAck(raw = resultAsObject(result))
+    }
+
+    /**
+     * conversation 重同步（resyncConversationV4）：seq 空洞 / watchdog 超时后重放。
+     * zemote :1015 额外带 forceSnapshot=true（conversation 再同步按整表重语义更稳）。
+     */
+    suspend fun resyncConversation(
+        subscriptionId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        baseLogEpoch: String? = null,
+        baseSeq: Long? = null,
+        timeoutMs: Long = SUBSCRIBE_TIMEOUT_MS,
+    ): SubscribeAck {
+        val result = channel.request(
+            V4.CHANNEL_ZCODE_AGENT,
+            V4.METHOD_CONVERSATION_RESYNC,
+            buildResyncParams(
+                subscriptionId = subscriptionId,
+                workspacePath = workspacePath,
+                workspaceIdentity = workspaceIdentity ?: boundWorkspaceIdentity,
+                baseLogEpoch = baseLogEpoch,
+                baseSeq = baseSeq,
+                forceSnapshot = true,
+            ),
+            timeoutMs,
+        )
+        return SubscribeAck(raw = resultAsObject(result))
     }
 
     /**

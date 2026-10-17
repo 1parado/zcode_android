@@ -255,6 +255,21 @@ class ZcodeConnection(
      */
     private val relayWorkspaceIdentity = java.util.concurrent.ConcurrentHashMap<String, String>()
 
+    /**
+     * 服务端 workspaceKey 归一（[ServerInfo.Workspace.key]）：identity 缺席时回落 path。
+     * 桌面所有按 workspace 的匹配（bridge-open、fan-out、topic）都用它。
+     */
+    private fun workspaceKeyFor(workspace: ServerInfo.Workspace): String =
+        com.zai.zcode.core.protocol.v4.workspaceKeyOf(
+            workspace.path,
+            identityFor(workspace),
+        )
+
+    /** 当前 workspace 的 identity（V4 scope / 命令链路贯穿传递用）。 */
+    private fun identityFor(workspace: ServerInfo.Workspace): String? =
+        workspace.workspaceIdentity?.trim()?.takeUnless { it.isEmpty() }
+            ?: relayWorkspaceIdentity[workspace.path]
+
     private fun newRequestId(): String =
         java.util.UUID.randomUUID().toString().replace("-", "").take(12)
 
@@ -326,7 +341,13 @@ class ZcodeConnection(
                     ?: w.strOrNull("key") ?: w.strOrNull("id") ?: identity
                     ?: return@mapNotNull null
                 if (identity != null) relayWorkspaceIdentity[path] = identity
-                ServerInfo.Workspace(path = path, label = w.strOrNull("label"))
+                // 修复依据（真机 v0.2.14）：identity 随 workspace 对象携带（见
+                // [ServerInfo.Workspace.workspaceIdentity]），旁路 map 只作兜底。
+                ServerInfo.Workspace(
+                    path = path,
+                    label = w.strOrNull("label"),
+                    workspaceIdentity = identity,
+                )
             }
         return ServerInfo(
             serverId = result?.strOrNull("serverId") ?: "relay",
@@ -370,7 +391,14 @@ class ZcodeConnection(
             put("requestId", "wb-" + newRequestId())
             put("bridgeSessionId", bridgeSessionId)
             put("bridgeGeneration", gen)
-            put("workspaceKey", workspace.path)
+            // 修复依据（真机 v0.2.14「列表零内容 + 创建会话失败」）：桌面
+            // webRemoteControlManager.ts:894-901 用 resolveWebRemoteControlWorkspaceKey
+            // （= workspaceIdentity?.trim() || workspacePath）**精确等值** find 目标
+            // workspace，找不到就抛「目标工作区不在当前桌面窗口中」。远程 tab 的
+            // identity ≠ path（rootPlatformWorkspaceSync.ts 给 isRemote 写 identity），
+            // 此处发裸 path 会让 bridge 直接建不起来 → 无 V4 通道 → 零帧 + 命令全失败。
+            // 对齐 zemote zemote_client.dart:279（发 workspaceKeyOf 的结果）。
+            put("workspaceKey", workspaceKeyFor(workspace))
             recoveryId?.let { put("recoveryId", it) }
         }, match = { p, sent ->
             (p.zcodeType() == "workspace-bridge-ready" || p.zcodeType() == "workspace-bridge-error") &&
@@ -421,7 +449,7 @@ class ZcodeConnection(
         // attach 事件监听：identity 存在时传 workspaceIdentity（远程链路贯穿传递，AGENTS.md）
         protocol.attachFrameListener(
             workspacePath = workspace.path,
-            workspaceIdentity = relayWorkspaceIdentity[workspace.path],
+            workspaceIdentity = identityFor(workspace),
         )
 
         relayBridge = RelayBridge(bridge, transport, wsChannel, protocol)
@@ -431,7 +459,12 @@ class ZcodeConnection(
         relayClient?.sendPayload(buildJsonObject {
             put("zcode_type", "mobile-view-state-update")
             put("viewState", buildJsonObject {
-                put("activeWorkspaceKey", workspace.path)
+                // 修复依据（真机 v0.2.14）：与 workspace-bridge-open 同用服务端
+                // workspaceKey 归一（identity.trim() || path）。zemote
+                // sendMobileViewState（zemote_client.dart:386-403）传同一个 bridge key；
+                // 发裸 path 会让桌面按 identity 记录的乐观状态对不上，视图状态与真
+                // 实 bridge 错位。
+                put("activeWorkspaceKey", workspaceKeyFor(workspace))
                 put("updatedAt", System.currentTimeMillis())
             })
             put("deviceInfo", buildJsonObject {
@@ -463,7 +496,9 @@ class ZcodeConnection(
                 val res = relayRequest(buildJsonObject {
                     put("zcode_type", "workspace-reconnect-request")
                     put("requestId", "wr-" + newRequestId())
-                    put("workspaceKey", ws0.path)
+                    // 修复依据（真机 v0.2.14）：同 openBridge，重连也按服务端
+                    // workspaceKey 归一寻址，否则桌面找不到目标 bridge。
+                    put("workspaceKey", workspaceKeyFor(ws0))
                 }, match = { p, sent ->
                     p.zcodeType() == "workspace-reconnect-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull == sent["requestId"]?.jsonPrimitive?.contentOrNull
@@ -535,9 +570,13 @@ class ZcodeConnection(
                 // 全仓库无调用者——subscribe 只建 topic，服务端只向已 listen 的动态事件
                 // 发 EventFire，导致一行流式数据都收不到。事件监听是连接生命周期的一
                 // 部分，由拥有生命周期的本类在进入 Ready 时自动挂上，不让每个 feature 记着挂。
-                val workspace = info.workspaces.firstOrNull()?.path
+                val workspace = info.workspaces.firstOrNull()
                 if (workspace != null) {
-                    protocol.attachFrameListener(workspacePath = workspace)
+                    // 修复依据（真机 v0.2.14）：LAN 直连也有 remote tab 场景
+                    // （identity ≠ path），此处原先只传 path，后续 subscribe 靠门面
+                    // boundWorkspaceIdentity 兜底才没出问题；显式传 identity 让帧
+                    // fan-out 参数与订阅登记同源。
+                    protocol.attachFrameListener(workspace.path, identityFor(workspace))
                 }
 
                 _state.value = State.Ready(info)
@@ -654,7 +693,7 @@ class ZcodeConnection(
                     scope.launch { recoverBridge() }
                 }
             } else {
-                _protocol.value?.attachFrameListener(workspace.path)
+                _protocol.value?.attachFrameListener(workspace.path, identityFor(workspace))
                 // protocol 实例未变，Repository 需要显式触发：重发 protocol 值让订阅方重跑
                 _protocol.value = _protocol.value
             }
@@ -662,7 +701,9 @@ class ZcodeConnection(
             relayClient?.sendPayload(buildJsonObject {
                 put("zcode_type", "mobile-view-state-update")
                 put("viewState", buildJsonObject {
-                    put("activeWorkspaceKey", workspace.path)
+                    // 修复依据（真机 v0.2.14）：同 openBridge，视图状态也走服务端
+                    // workspaceKey 归一，避免与 bridge 登记的 key 错位。
+                    put("activeWorkspaceKey", workspaceKeyFor(workspace))
                     put("updatedAt", System.currentTimeMillis())
                 })
             })
@@ -694,7 +735,7 @@ class ZcodeConnection(
         // workspaceKey(identity.trim()||path),不是裸 workspacePath。对齐 zemote
         // main_shell.dart:18 workspaceKeyOf 与桌面 useDraftSessionPrewarm.ts:76。
         // 远程链路 identity≠path,填 path 会让会话落到另一工作区。
-        val wsIdentity = relayWorkspaceIdentity[ws.path]
+        val wsIdentity = identityFor(ws)
         return runCatching {
             val payload = buildJsonObject {
                 put("workspaceId", com.zai.zcode.core.protocol.v4.workspaceKeyOf(ws.path, wsIdentity))
@@ -718,11 +759,20 @@ class ZcodeConnection(
                 return@runCatching null
             }
             val result = ack.result
-            if (result?.get("type")?.jsonPrimitive?.contentOrNull != "createSession") {
+            // 修复依据（真机 v0.2.15「已 accepted 却提示创建失败」）：zemote
+            // createSession（conversation.dart:284-288）只判 sessionId 是否为非空
+            // 字符串，不校验 result.type。服务端 commandResultSchema 的
+            // createSession 分支确实带 type，但 duplicate 回放与部分旧 CLI 只回
+            // {sessionId}，多一道 type 校验就把"会话已建好"报成失败，UI 弹错而
+            // 列表里其实已经多了会话。只认 sessionId 这一条事实。
+            val sessionId = result?.get("sessionId") as? JsonPrimitive
+            if (sessionId == null || sessionId is kotlinx.serialization.json.JsonNull ||
+                !sessionId.isString || sessionId.content.isBlank()
+            ) {
                 ZLog.w(TAG, "createSession ack missing result sessionId")
                 return@runCatching null
             }
-            (result["sessionId"] as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.contentOrNull
+            sessionId.content
         }.getOrElse {
             ZLog.w(TAG, "createSession failed: ${it.message}")
             null

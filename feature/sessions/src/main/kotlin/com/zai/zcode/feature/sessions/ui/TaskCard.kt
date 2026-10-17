@@ -1,7 +1,6 @@
 package com.zai.zcode.feature.sessions.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +29,7 @@ import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.LiveDot
 import com.zai.zcode.core.design.components.ZcodeStatus
+import com.zai.zcode.core.design.jellyClickable
 import com.zai.zcode.feature.sessions.SessionsRepository
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,7 +52,9 @@ fun TaskCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(zc.card, ZcodeShape.card)
-            .clickable(onClick = onClick)
+            // 修复依据（docs/ui-design.md §7 果冻按压）：任务卡是列表里最高频的点击目标，
+            // 按下立即缩到 0.96 再弹簧回弹，触达确认早于 ripple。
+            .jellyClickable(onClick = onClick)
             .padding(ZcodeSpacing.cardPadding),
         verticalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
     ) {

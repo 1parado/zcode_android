@@ -22,8 +22,9 @@ class ChatViewModel @Inject constructor(
 
     val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
     // 修复依据（P2-5）：workspace 由 ZcodeConnection.currentWorkspace 单一派生，feature 不再自推
-    private val workspacePath: String =
-        connection.currentWorkspace.value?.path ?: connection.serverInfo.value?.workspaces?.firstOrNull()?.path ?: ""
+    private val workspace = connection.currentWorkspace.value
+        ?: connection.serverInfo.value?.workspaces?.firstOrNull()
+    private val workspacePath: String = workspace?.path ?: ""
 
     private val repository = ChatRepository(
         scope = viewModelScope,
@@ -31,6 +32,9 @@ class ChatViewModel @Inject constructor(
         sessionId = sessionId,
         workspacePath = workspacePath,
         clientId = clientIds.clientId,
+        // 修复依据（真机 v0.2.15）：远程链路 identity 必须贯穿到会话订阅/命令，
+        // 否则服务端 workspaceKey 与帧 fan-out 目标错位（AGENTS.md「Workspace Identity」）
+        workspaceIdentity = workspace?.workspaceIdentity,
     )
 
     val ui get() = repository.ui

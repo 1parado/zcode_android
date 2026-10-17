@@ -42,6 +42,13 @@ object V4 {
     const val METHOD_COMMANDS_QUERY = "queryConversationCommandsV4"
     const val METHOD_SESSIONS_INDEX_SUBSCRIBE = "subscribeSessionsIndexV4"
     const val METHOD_SESSIONS_INDEX_UNSUBSCRIBE = "unsubscribeSessionsIndexV4"
+    /**
+     * 修复依据（真机 v0.2.15「列表偶发缺失 / 越用越少」）：zemote
+     * _SubscriptionBase._resyncMethod = 'resyncSessionsIndexV4'
+     * （conversation.dart:1293），服务端 zcodeAgentService.ts:6417 确有该 RPC。
+     * Android 原先没有退订/重同步入口，检测到 seq 空洞后无从恢复。
+     */
+    const val METHOD_SESSIONS_INDEX_RESYNC = "resyncSessionsIndexV4"
 
     // V4 下行事件（on* 方法 → channel.listen(propKey, workspaceTarget)）。
     const val EVENT_CONVERSATION_FRAME = "onDynamicConversationFrame"
@@ -301,6 +308,36 @@ fun buildSessionsIndexSubscribeParams(
     if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
     if (visibility != null) put("visibility", visibility)
     put("runtimePolicy", "existing-only")
+}
+
+/**
+ * resync 参数（conversationResyncParamsSchema + scope）。
+ *
+ * 修复依据（真机 v0.2.15「列表偶发缺失」）：zemote conversation.dart:943-968 在 seq
+ * 空洞时用 `resync*V4({...scope, subscriptionId, ...args, base:{logEpoch,seq}})`
+ * 请求服务端重放；base 只在已有 logEpoch 时发（schema 里 base 是 nullable）。
+ * conversation 侧 zemote 额外带 forceSnapshot（:1015），sessions-index 侧不带（:1301）。
+ */
+fun buildResyncParams(
+    subscriptionId: String,
+    workspacePath: String,
+    workspaceIdentity: String? = null,
+    baseLogEpoch: String? = null,
+    baseSeq: Long? = null,
+    forceSnapshot: Boolean? = null,
+    runtimePolicy: String? = null,
+): JsonObject = buildJsonObject {
+    put("workspacePath", workspacePath)
+    if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+    put("subscriptionId", subscriptionId)
+    if (runtimePolicy != null) put("runtimePolicy", runtimePolicy)
+    if (forceSnapshot != null) put("forceSnapshot", forceSnapshot)
+    if (baseLogEpoch != null && baseSeq != null) {
+        put("base", buildJsonObject {
+            put("logEpoch", baseLogEpoch)
+            put("seq", baseSeq)
+        })
+    }
 }
 
 /** subscribe ACK（{ack:{subscriptionId, mode, logEpoch}}）。 */

@@ -1,7 +1,6 @@
 package com.zai.zcode.core.design.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -85,7 +84,9 @@ fun FilterChip(
     val fg = if (selected) (if (zc.darkTheme) zc.base else zc.base) else zc.textSecondary
     Box(
         modifier
-            .clickable(onClick = onClick)
+            // 修复依据（docs/ui-design.md §7 果冻按压）：chip 是横向滚动行里的小目标，
+            // 按压缩放给出比 ripple 更早的触达确认。
+            .jellyClickable(onClick = onClick)
             .background(bg, ZcodeShape.inner)
             .padding(horizontal = ZcodeSpacing.md, vertical = 6.dp),
     ) {
@@ -140,7 +141,7 @@ fun DeviceChip(
     val zc = LocalZcodeColors.current
     Row(
         modifier
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (onClick != null) Modifier.jellyClickable(onClick = onClick) else Modifier)
             .background(zc.card, ZcodeShape.inner)
             .padding(horizontal = ZcodeSpacing.md, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,

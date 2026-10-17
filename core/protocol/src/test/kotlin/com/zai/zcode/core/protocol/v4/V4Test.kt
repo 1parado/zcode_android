@@ -274,6 +274,73 @@ class ConversationReducerTest {
         }))!!
         assertFalse(reducer.apply(frame))
     }
+
+    @Test
+    fun `deltas fromSeq gap triggers onSeqGap and is not applied`() {
+        // 修复依据（真机 v0.2.15「聊天流停在半句」）：zemote ConversationState.applyFrame
+        // （conversation.dart:1351-1354）对 deltas 做 `if (fromSeq != seq) { onGap(); return; }`。
+        // 空洞帧若"带洞继续"施加，流式 append 会拼在缺前序的文本上，且水位与状态漂移。
+        val reducer = ConversationReducer()
+        var gaps = 0
+        reducer.onSeqGap = { gaps++ }
+        val topic = "conversation/s1"
+        reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 3, buildJsonObject {
+            put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement(
+                """[{"rowId":1,"kind":"assistantText","text":"he"}]"""
+            ))
+        }))!!)
+        // 中间 fromSeq=3→5 那帧丢了，直接来 fromSeq=5 的帧
+        val applied = reducer.apply(deltaFrame(topic, 5, 9, """[{"op":"row.delta","rowId":1,"path":"text","append":"llo"}]"""))
+        assertFalse(applied)
+        assertEquals(1, gaps)
+        // 空洞帧不得改状态也不得推进水位，等 resync 的 snapshot 来救
+        val st = reducer.snapshot("s1")
+        assertEquals(3, st.seq)
+        assertEquals("\"he\"", st.rows[0]["text"].toString())
+    }
+
+    @Test
+    fun `contiguous deltas do not trigger gap`() {
+        val reducer = ConversationReducer()
+        var gaps = 0
+        reducer.onSeqGap = { gaps++ }
+        val topic = "conversation/s1"
+        reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 5, buildJsonObject {
+            put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement(
+                """[{"rowId":1,"kind":"assistantText","text":"he"}]"""
+            ))
+        }))!!)
+        assertTrue(reducer.apply(deltaFrame(topic, 5, 6, """[{"op":"row.delta","rowId":1,"path":"text","append":"llo"}]""")))
+        assertEquals(0, gaps)
+        assertEquals("\"hello\"", reducer.snapshot("s1").rows[0]["text"].toString())
+    }
+
+    @Test
+    fun `resync snapshot with stale toSeq still replaces`() {
+        // resync 重放的 snapshot 常带着与本地陈旧水位相等甚至更小的 toSeq；
+        // 必须整表替换且不倒退水位，否则下一个 delta 会被判成空洞 → resync 自我循环。
+        val reducer = ConversationReducer()
+        var gaps = 0
+        reducer.onSeqGap = { gaps++ }
+        val topic = "conversation/s1"
+        reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 5, buildJsonObject {
+            put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement(
+                """[{"rowId":1,"kind":"assistantText","text":"he"}]"""
+            ))
+        }))!!)
+        assertTrue(reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 5, buildJsonObject {
+            put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement(
+                """[{"rowId":1,"kind":"assistantText","text":"hello"},{"rowId":2,"kind":"userInput","text":"q"}]"""
+            ))
+        }))!!))
+        val st = reducer.snapshot("s1")
+        assertEquals(2, st.rows.size)
+        assertEquals(5, st.seq)
+        assertEquals(0, gaps)
+        // 重放后水位仍是 5，后续 fromSeq=5 的 delta 可以正常衔接
+        assertTrue(reducer.apply(deltaFrame(topic, 5, 6, """[{"op":"row.delta","rowId":1,"path":"text","append":"!"}]""")))
+        assertEquals(0, gaps)
+    }
 }
 
 class SessionsIndexReducerTest {
@@ -307,6 +374,61 @@ class SessionsIndexReducerTest {
         snap = reducer.snapshot()
         assertEquals(2, snap.sessions.size)
         assertTrue(snap.sessions.none { SessionSummaryView(it).sessionId == "s1" })
+    }
+
+    @Test
+    fun `fromSeq gap triggers onSeqGap and is not applied`() {
+        // 修复依据（真机 v0.2.15「列表偶发缺失」）：zemote conversation.dart:1257 对
+        // deltas 做 `if (fromSeq != seq) { onGap(); return; }`。带洞的帧必须整帧丢弃
+        // 且不推进水位，否则本地状态会静默停在少条目的状态。
+        val reducer = SessionsIndexReducer()
+        var gaps = 0
+        reducer.onSeqGap = { gaps++ }
+        reducer.apply(frame(
+            """{"kind":"snapshot","snapshot":{"workspaceId":"w1","logEpoch":"e1","sessions":[{"sessionId":"s1","title":"A"}]}}""",
+            3,
+        ))
+        // 空洞：本地水位 3，帧却从 5 起步
+        val applied = reducer.apply(
+            frame("""{"kind":"deltas","deltas":[{"op":"session.removed","sessionId":"s1"}]}""", 9, 5),
+        )
+        assertFalse(applied)
+        assertEquals(1, gaps)
+        // 未推进水位 + 未施加：条目仍在
+        assertEquals(3L, reducer.snapshot().seq)
+        assertEquals(1, reducer.snapshot().sessions.size)
+    }
+
+    @Test
+    fun `contiguous deltas do not trigger gap`() {
+        val reducer = SessionsIndexReducer()
+        var gaps = 0
+        reducer.onSeqGap = { gaps++ }
+        reducer.apply(frame(
+            """{"kind":"snapshot","snapshot":{"workspaceId":"w1","sessions":[{"sessionId":"s1"}]}}""",
+            5,
+        ))
+        assertTrue(reducer.apply(frame("""{"kind":"deltas","deltas":[]}""", 6, 5)))
+        assertEquals(0, gaps)
+    }
+
+    @Test
+    fun `resync snapshot with equal toSeq is still applied`() {
+        // 修复依据（真机 v0.2.15「resync 后仍空」）：resync 重放的 snapshot 可能带着
+        // 与本地陈旧水位相等的 toSeq，被 `toSeq <= seq` 拦掉就等于 resync 白做。
+        val reducer = SessionsIndexReducer()
+        reducer.apply(frame(
+            """{"kind":"snapshot","snapshot":{"workspaceId":"w1","logEpoch":"e1","sessions":[{"sessionId":"s1"}]}}""",
+            5,
+        ))
+        val replay = frame(
+            """{"kind":"snapshot","snapshot":{"workspaceId":"w1","logEpoch":"e1","sessions":[{"sessionId":"s1"},{"sessionId":"s2"},{"sessionId":"s3"}]}}""",
+            5,
+        )
+        assertTrue(reducer.apply(replay))
+        assertEquals(3, reducer.snapshot().sessions.size)
+        // 水位不倒退
+        assertEquals(5L, reducer.snapshot().seq)
     }
 }
 

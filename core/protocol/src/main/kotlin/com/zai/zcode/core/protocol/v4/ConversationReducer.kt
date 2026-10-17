@@ -29,6 +29,18 @@ class ConversationReducer {
     private var seq: Long = 0
     private var logEpoch: String? = null
 
+    /**
+     * seq 空洞回调：deltas 帧的 fromSeq 与本地水位对不上时触发，请求层应发
+     * resyncConversationV4 整表重放。
+     *
+     * 修复依据（真机 v0.2.15「聊天流偶发停在半句 / 工具结果不回来」）：zemote
+     * ConversationState.applyFrame（conversation.dart:1351-1354）在 deltas 分支同样做
+     * `if (fromSeq != seq) { onGap(); return; }`。Android 原实现只判 `toSeq <= seq`
+     * 去重：丢帧后水位停在旧值，后续 deltas 被当成"合法旧帧"静默丢弃，而流式
+     * append 又必须以完整前序为基础——表现就是消息永远停在半句且不报错。
+     */
+    var onSeqGap: (() -> Unit)? = null
+
     /** 施加一个已重组的 logical 帧。返回 true 表示状态有变化。 */
     fun apply(frame: TopicFrame): Boolean {
         if (!frame.topic.startsWith("conversation/")) return false
@@ -55,6 +67,12 @@ class ConversationReducer {
 
         when (kind) {
             "deltas" -> {
+                // 修复依据（真机 v0.2.15）：见 [onSeqGap] 的注释——必须在推进 seq 之前
+                // 判定空洞，且空洞帧不能算"已应用"（否则本地状态与水位同步漂移）。
+                if (frame.fromSeq != seq) {
+                    onSeqGap?.invoke()
+                    return false
+                }
                 for (deltaEl in frame.deltas() ?: return false) {
                     val delta = deltaEl as? JsonObject ?: continue
                     applyDelta(delta)

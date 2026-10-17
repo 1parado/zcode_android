@@ -155,6 +155,60 @@ class V4WorkspaceIdentityTest {
     }
 
     @Test
+    fun `resync sends sessionsIndex method with subscriptionId and base`() {
+        // 修复依据（真机 v0.2.15）：resync 必须走 sessions-index 专用方法
+        // （zemote conversation.dart:1293；服务端 zcodeAgentService.ts:6417），
+        // 且参数里带 subscriptionId + runtimePolicy + base{logEpoch,seq}。
+        val frames = collectSentWhile {
+            attachFrameListener(workspacePath = "/ws", workspaceIdentity = "ssh://host/ws")
+            resyncSessionsIndex("sub-9", "/ws", baseLogEpoch = "e1", baseSeq = 4)
+        }
+        val matches = frames.filter { (header, _) ->
+            header.size > 3 && header[3].jsonPrimitive.content == V4.METHOD_SESSIONS_INDEX_RESYNC
+        }
+        assertEquals(1, matches.size)
+        val params = (matches[0].second as JsonArray).first() as JsonObject
+        assertEquals("sub-9", params["subscriptionId"]!!.jsonPrimitive.content)
+        assertEquals("ssh://host/ws", params["workspaceIdentity"]!!.jsonPrimitive.content)
+        assertEquals("existing-only", params["runtimePolicy"]!!.jsonPrimitive.content)
+        val base = params["base"] as JsonObject
+        assertEquals("e1", base["logEpoch"]!!.jsonPrimitive.content)
+        assertEquals(4L, base["seq"]!!.jsonPrimitive.content.toLong())
+        // sessions-index 侧 zemote 不带 forceSnapshot（conversation.dart:1301）
+        assertNull(params["forceSnapshot"])
+    }
+
+    @Test
+    fun `conversation resync carries forceSnapshot`() {
+        // zemote conversation.dart:1015：conversation 侧额外带 forceSnapshot=true
+        val frames = collectSentWhile {
+            resyncConversation("sub-1", "/ws", baseLogEpoch = "e", baseSeq = 2)
+        }
+        val matches = frames.filter { (header, _) ->
+            header.size > 3 && header[3].jsonPrimitive.content == V4.METHOD_CONVERSATION_RESYNC
+        }
+        assertEquals(1, matches.size)
+        val params = (matches[0].second as JsonArray).first() as JsonObject
+        assertEquals(true, params["forceSnapshot"].asBooleanOrNull())
+    }
+
+    @Test
+    fun `unsubscribe dispatches per topic owner`() {
+        // 修复依据（真机 v0.2.15）：conversation 的退订方法route前缀是 conversation/，
+        // 退 sessions-index 订阅时必须用 index 专用方法（conversation.dart:1291）。
+        val frames = collectSentWhile {
+            unsubscribe("sub-1", "/ws", sessionsIndex = true)
+        }
+        val sessionMatches = frames.filter { (header, _) ->
+            header.size > 3 && header[3].jsonPrimitive.content == V4.METHOD_SESSIONS_INDEX_UNSUBSCRIBE
+        }
+        assertEquals(1, sessionMatches.size)
+        val params = (sessionMatches[0].second as JsonArray).first() as JsonObject
+        assertEquals("sub-1", params["subscriptionId"]!!.jsonPrimitive.content)
+        assertEquals("existing-only", params["runtimePolicy"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun `workspaceKeyOf prefers trimmed identity over path`() {
         // 修复依据（真机 v0.2.14「创建会话失败」）：createSession payload.workspaceId
         // 必须是 workspaceKey 而非裸 workspacePath。对齐 zemote main_shell.dart:18。

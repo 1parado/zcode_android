@@ -16,7 +16,21 @@ data class ServerInfo(
     val authRequired: Boolean,
     val workspaces: List<Workspace>,
 ) {
-    data class Workspace(val path: String, val label: String?)
+    /**
+     * @param workspaceIdentity 远程链路的身份（AGENTS.md「Workspace Identity」）。
+     * 修复依据（真机 v0.2.14）：identity 原先只活在 ZcodeConnection 的旁路 map 里，
+     * 任何没走该 map 的路径（LAN 直连、deeplink 重建、进程恢复后的反序列化）都会
+     * 静默丢 identity，进而用裸 path 去撞桌面按 identity 的精确匹配。把它放进
+     * workspace 模型随对象传递（对齐 zemote main_shell.dart:16-29 全程携带）。
+     */
+    data class Workspace(
+        val path: String,
+        val label: String?,
+        val workspaceIdentity: String? = null,
+    ) {
+        /** 服务端 key 归一：`workspaceIdentity?.trim() || workspacePath`。 */
+        val key: String get() = com.zai.zcode.core.protocol.v4.workspaceKeyOf(path, workspaceIdentity)
+    }
 
     companion object {
         fun fromJson(obj: JsonObject): ServerInfo {
@@ -32,6 +46,8 @@ data class ServerInfo(
                     Workspace(
                         path = path,
                         label = (w["label"] as? JsonPrimitive)?.takeIf { p -> p !is JsonNull && p.isString }?.content,
+                        workspaceIdentity = (w["workspaceIdentity"] as? JsonPrimitive)
+                            ?.takeIf { p -> p !is JsonNull && p.isString }?.content,
                     )
                 }
             fun str(key: String): String? =
