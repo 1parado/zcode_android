@@ -82,7 +82,7 @@ class UuRemoteCallbackRouter {
         val uri = intent?.data ?: return false
         if (uri.scheme != CALLBACK_SCHEME) return false
         return when (uri.host) {
-            "bind" -> handleBind(uri); true
+            "bind" -> { handleBind(uri); true }
             "control" -> { handleControl(uri); true }
             else -> false
         }
