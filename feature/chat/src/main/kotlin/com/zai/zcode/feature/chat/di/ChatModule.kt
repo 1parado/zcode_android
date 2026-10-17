@@ -1,6 +1,6 @@
 package com.zai.zcode.feature.chat.di
 
-import com.zai.zcode.feature.chat.ClientIdProvider
+import com.zai.zcode.core.common.ClientIdProvider
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn

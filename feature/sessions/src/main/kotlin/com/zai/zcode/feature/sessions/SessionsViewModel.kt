@@ -2,8 +2,8 @@ package com.zai.zcode.feature.sessions
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.zai.zcode.core.network.ConnectionFacade
 import com.zai.zcode.core.network.ZcodeConnection
-import com.zai.zcode.feature.connect.ConnectionFacade
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow

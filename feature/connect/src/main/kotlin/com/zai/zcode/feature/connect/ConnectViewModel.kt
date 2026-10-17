@@ -103,15 +103,6 @@ class ConnectViewModel @Inject constructor(
 }
 
 /**
- * 单例连接宿主：App 范围内共享一条 [ZcodeConnection]（Hilt 提供）。
- * 之所以做成独立类而非直接 @Provides：connection 需要 appScope + clientId 等运行期参数。
+ * ConnectionHolder / ConnectionFacade 已下沉到 core/network
+ * （feature/chat、feature/sessions 也需要消费，放 connect 会造成模块环）。
  */
-@Singleton
-class ConnectionHolder @Inject constructor(
-    val connection: ZcodeConnection,
-)
-
-/** 供 ViewModel 消费的只读转发（避免 feature 直接拿 holder）。 */
-class ConnectionFacade @Inject constructor(holder: ConnectionHolder) {
-    val connection: ZcodeConnection get() = holder.connection
-}

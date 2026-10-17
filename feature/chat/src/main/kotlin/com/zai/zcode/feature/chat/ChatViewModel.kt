@@ -6,7 +6,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.zai.zcode.feature.connect.ConnectionFacade
+import com.zai.zcode.core.common.ClientIdProvider
+import com.zai.zcode.core.network.ConnectionFacade
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -63,6 +64,3 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch { repository.stop() }
     }
 }
-
-/** clientId 桥（connect 模块提供单例，chat 模块只依赖接口语义）。 */
-interface ClientIdProvider { val clientId: String }
