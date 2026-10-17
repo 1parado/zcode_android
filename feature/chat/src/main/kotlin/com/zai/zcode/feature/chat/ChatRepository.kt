@@ -20,6 +20,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+// 修复依据（CI run 62）：buildJsonObject 内的 put(String, String) 来自 kotlinx.serialization
+// 的 JsonObjectBuilder.put 扩展，漏 import 时编译器把 String 当成 JsonElement 报错
+// （ZcodeProtocolV4.sendCommand 里同一陷阱已注明）。
+import kotlinx.serialization.json.put
 
 private const val TAG = "ChatRepository"
 
