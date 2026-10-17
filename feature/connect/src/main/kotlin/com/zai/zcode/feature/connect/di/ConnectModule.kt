@@ -3,6 +3,9 @@ package com.zai.zcode.feature.connect.di
 import com.zai.zcode.core.common.ClientIdProvider
 import com.zai.zcode.core.network.ConnectionHolder
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.feature.connect.ConnectionSettingsStore
+import com.zai.zcode.feature.connect.SecureTokenStore
+import android.content.Context
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -41,4 +44,17 @@ object ConnectModule {
     @Provides
     @Singleton
     fun connectionHolder(conn: ZcodeConnection): ConnectionHolder = ConnectionHolder(conn)
+
+    // 修复 CI Dagger/MissingBinding：两个 Store 需要构造注入，补 @Provides 绑定
+    @Provides
+    @Singleton
+    fun connectionSettingsStore(
+        @dagger.hilt.android.qualifiers.ApplicationContext context: Context,
+    ): ConnectionSettingsStore = ConnectionSettingsStore(context)
+
+    @Provides
+    @Singleton
+    fun secureTokenStore(
+        @dagger.hilt.android.qualifiers.ApplicationContext context: Context,
+    ): SecureTokenStore = SecureTokenStore(context)
 }
