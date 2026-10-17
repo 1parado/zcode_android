@@ -10,6 +10,8 @@ import com.zai.zcode.ui.AppNavHost
 // 修复：ui.theme 包内是旧壳主题 ZcodemobileTheme；feature 模块统一用 core/design 的
 // ZcodeTheme，宿主也用它保证全 App 主题一致
 import com.zai.zcode.core.design.ZcodeTheme
+// 修复：缺 AndroidEntryPoint 导入导致 Unresolved（app 模块已含 hilt 依赖）
+import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
