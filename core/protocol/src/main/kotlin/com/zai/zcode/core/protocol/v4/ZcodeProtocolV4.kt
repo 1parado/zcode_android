@@ -67,10 +67,11 @@ class ZcodeProtocolV4(
         // 原实现只 collect conversation 事件导致 sessions-index 永远收不到帧。
         scope.launch {
             channel.events.collect { event ->
-                if (event.channelName == V4.CHANNEL_ZCODE_AGENT &&
-                    (event.event == V4.EVENT_CONVERSATION_FRAME ||
-                        event.event == V4.EVENT_SESSIONS_INDEX_FRAME)
-                ) {
+                // 修复依据(真机 v0.2.12"零帧"):桌面 EventFire header 不含事件名
+                // (channelServer.ts 只发 [204, id]),event 为 null 是常态。此处按
+                // channelName 过滤即可;帧 kind 由 dispatchLogicalFrame 按 topic 分发,
+                // 两条监听(dispose 后重挂)都汇入同一入口。
+                if (event.channelName == V4.CHANNEL_ZCODE_AGENT) {
                     handleWireNotification(event.payload)
                 }
             }

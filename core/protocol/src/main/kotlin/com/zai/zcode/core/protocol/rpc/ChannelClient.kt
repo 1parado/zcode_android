@@ -34,14 +34,21 @@ private const val TAG = "ChannelClient"
  * 3. 请求物理帧 body = serialize([RequestType, id, channelName, methodName]) + serialize(args)
  * 4. 响应 PromiseSuccess = serialize([201, id]) + serialize(data)；
  *    PromiseError = serialize([202, id]) + serialize({message,name,...})
- * 5. 事件 = serialize([204, id, event]) + serialize(payload)
+ * 5. 事件 fire = serialize([204, id]) + serialize(payload)（channelServer.ts sendResponse:
+ *    EventFire 的 header 只有 [type, id] 两元素，不含事件名——TS channelClient 纯按
+ *    id 路由 handler，事件名在 wire 上不存在）。
  */
 class ChannelClient(
     private val scope: CoroutineScope,
 ) {
     enum class State { UNINITIALIZED, IDLE, CLOSED }
 
-    data class EventFireData(val channelName: String, val event: String, val payload: Any?)
+    /**
+     * [event] 兼容两种 wire：桌面 ChannelServer 只发两元素 header `[204, id]`
+     * （channelServer.ts:50 `send([response.type, response.id], response.data)`，事件名
+     * 不上线），此时 event 为 null；若对端带第三元素则取之。
+     */
+    data class EventFireData(val channelName: String, val event: String?, val payload: Any?)
 
     private val _state = MutableStateFlow(State.UNINITIALIZED)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -117,7 +124,15 @@ class ChannelClient(
             }
             RpcResponseType.EVENT_FIRE -> {
                 val id = intAt(1) ?: return
-                val event = (arr.getOrNull(2) as? JsonPrimitive)?.contentOrNull ?: return
+                // 修复依据(真机 v0.2.12"订阅 ACK 成功但 20s 无帧到达"):桌面 channelServer.ts
+                // 的 sendResponse 对 EventFire 发的是 send([response.type, response.id], data)
+                // ——header 只有 [204, id] 两元素,不含事件名;TS channelClient.ts 纯按 id
+                // 路由 handler,根本不需要事件名。旧实现写死 arr.getOrNull(2) 取事件名,
+                // 取不到就 ?: return,导致所有 EventFire 帧被静默丢弃(ACK 能到、零帧),
+                // 会话列表与聊天快照永不加载。现在按 eventListeners[id] 取 channelName,
+                // 事件名允许缺省(第三元素存在才取);V4 层 dispatchLogicalFrame 本就按
+                // frame.topic 前缀区分 conversation/sessions-index,不依赖事件名。
+                val event = (arr.getOrNull(2) as? JsonPrimitive)?.contentOrNull
                 val channelName = eventListeners[id] ?: return
                 // 修复依据（P1-4）：去掉 scope.launch 中转——launch 不保序且 DROP_OLDEST
                 // 会静默丢帧；onMessage 只被单一 socket 读协程调用，此处同步 emit 保序。
@@ -237,7 +252,25 @@ class ChannelClient(
     fun listenEvent(channelName: String, eventName: String, arg: Any? = null): Int {
         val id = nextReqId.incrementAndGet()
         eventListeners[id] = channelName
-        send(RpcRequestType.EVENT_LISTEN, id, channelName, eventName, arg)
+        // 修复依据(真机 v0.2.12"订阅成功但零帧"):TS channelClient.ts sendRequest 对
+        // EventListen 与 Promise 一律 serialize(writer, arg)——arg 原样序列化,不包数组
+        // (Promise 的 args 数组是 proxy 层预先展开的,EventListen 的动态事件参数是单个
+        // 值)。旧实现复用 send() 的 wireArgs 数组包装,桌面 connectionScope 收到的是
+        // [workspaceTarget],workspaceKey 推导偏差导致帧路由不命中。
+        val header = buildJsonArray {
+            add(JsonPrimitive(RpcRequestType.EVENT_LISTEN))
+            add(JsonPrimitive(id))
+            add(JsonPrimitive(channelName))
+            add(JsonPrimitive(eventName))
+        }
+        val body = RpcSerialization.serializeTwoSegments(header, arg as? JsonElement)
+        val frame = encodeRpcMessage(
+            RpcProtocol.MSG_REGULAR,
+            id,
+            ackCounter.getAndIncrement().toInt(),
+            body,
+        )
+        onSend?.invoke(frame)
         return id
     }
 
