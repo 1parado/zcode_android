@@ -284,7 +284,13 @@ class ZcodeConnection(
             }
             "bridge-degraded" -> {
                 ZLog.w(TAG, "bridge degraded: ${payload["reason"]?.jsonPrimitive?.contentOrNull}")
-                recoverBridge()
+                // 修复依据(真机日志 18:53-18:55):recoverBridge 的 relayRequest 挂起等待
+                // 响应,而响应的 matcher 只在 handleRelayPayload——即本 collect 循环——里
+                // 执行;同步调用等于等一个永远无人投递的信箱(死锁),表现为所有请求 30s
+                // 超时、迟到的 workspace-bridge-ready/rpc-frame 全部 unhandled、bridge
+                // 永久 degraded、sessions-index 无法订阅(UI 显示"暂无会话")。
+                // 恢复必须脱离 collect 循环,转投独立协程执行。
+                scope.launch { recoverBridge() }
             }
             else -> {
                 // 镜像 web 客户端 k()：遍历全部 pending matcher，命中即完成
@@ -432,7 +438,19 @@ class ZcodeConnection(
     }
 
     /** bridge-degraded 恢复：先便宜的 reconnect-request，失败重开 bridge（带 recoveryId）。 */
+    // 修复依据(真机日志 18:54"unhandled relay payload ×4"):多个 degrade 或恢复超时
+    // 重试可并发触发多次 recoverBridge,旧 bridge 对象在 openBridge 里被整体作废,
+    // 两次并发的 openBridge 会互相踢掉对方的 ready 响应。用互斥串行化恢复流程。
+    private val recoverMutex = Mutex()
+
     private suspend fun recoverBridge() {
+        recoverMutex.withLock {
+            if (relayBridge == null || !wantConnected.get()) return
+            recoverBridgeLocked()
+        }
+    }
+
+    private suspend fun recoverBridgeLocked() {
         val current = relayBridge ?: return
         val ws0 = _currentWorkspace.value ?: return
         repeat(3) { attempt ->
@@ -611,6 +629,52 @@ class ZcodeConnection(
     /** 会话/工作区选择变化时调用：workspaceTarget 决定事件 fan-out 范围。 */
     fun attachFrameListener(workspacePath: String, workspaceIdentity: String? = null) {
         _protocol.value?.attachFrameListener(workspacePath, workspaceIdentity)
+    }
+
+    /**
+     * Android 端创建会话（用户报"应该支持在 Android 上进行会话创建"）。
+     *
+     * 对齐桌面 V4 路径（SessionPane.tsx:3423 / useDraftSessionPrewarm.ts:89）：
+     * sendConversationCommandV4 + envelope{type:"createSession", sessionId:null,
+     * payload:{workspaceId:<workspaceKey>, firstInput?}}；ack.result.sessionId 是新会话。
+     * workspaceKey 语义 = 桌面 workspaceIdentity?.trim() || workspacePath（本地工作区
+     * 两者同值，见 bootstrap 解析）；sendCommand 侧补 workspacePath/identity 路由参数。
+     *
+     * @param firstInput 首条输入文本；null 创建 draft 空会话（phase=draft）
+     * @return 新会话 id；协议未就绪/被拒/异常返回 null（UI 提示失败即可）
+     */
+    suspend fun createSession(firstInput: String? = null): String? {
+        val p = _protocol.value ?: return null
+        val ws = _currentWorkspace.value ?: return null
+        return runCatching {
+            val payload = buildJsonObject {
+                put("workspaceId", ws.path)
+                if (!firstInput.isNullOrBlank()) {
+                    put("firstInput", buildJsonObject { put("text", firstInput) })
+                }
+            }
+            val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
+                commandId = java.util.UUID.randomUUID().toString(),
+                clientId = clientId,
+                sessionId = null, // createSession 幂等桶固定 null（command.ts:345）
+                type = "createSession",
+                payload = payload,
+            )
+            val ack = p.sendCommand(ws.path, envelope, relayWorkspaceIdentity[ws.path])
+            if (ack.status != "accepted") {
+                ZLog.w(TAG, "createSession rejected: ${ack.status} ${ack.reasonCode ?: ""} ${ack.message ?: ""}")
+                return@runCatching null
+            }
+            val result = ack.result
+            if (result?.get("type")?.jsonPrimitive?.contentOrNull != "createSession") {
+                ZLog.w(TAG, "createSession ack missing result sessionId")
+                return@runCatching null
+            }
+            (result["sessionId"] as? JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.contentOrNull
+        }.getOrElse {
+            ZLog.w(TAG, "createSession failed: ${it.message}")
+            null
+        }
     }
 }
 

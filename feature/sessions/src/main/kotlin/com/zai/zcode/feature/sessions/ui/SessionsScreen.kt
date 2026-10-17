@@ -49,6 +49,10 @@ fun SessionsScreen(
 ) {
     val sessions by viewModel.sessions.collectAsState()
     val connState by viewModel.connectionState.collectAsState()
+    // 修复依据(用户报"应该支持在 Android 上进行会话创建"):空态文案原来写死"去电脑端
+    // 创建",顶部也一直没有创建入口。此处接 ViewModel.createSession,创建成功直接进会话。
+    val creating by viewModel.creating.collectAsState()
+    val createError by viewModel.createError.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -66,6 +70,12 @@ fun SessionsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.size(8.dp))
+                CreateSessionButton(
+                    enabled = connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready && !creating,
+                    creating = creating,
+                    onClick = { viewModel.createSession(onOpenSession) },
+                )
+                Spacer(Modifier.size(12.dp))
                 Text(
                     "设置",
                     modifier = Modifier.clickable(onClick = onOpenSettings),
@@ -74,16 +84,38 @@ fun SessionsScreen(
             }
         }
 
+        createError?.let { msg ->
+            Text(
+                msg,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = viewModel::dismissCreateError)
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
         if (sessions.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
+                            "暂无会话"
+                        } else {
+                            "等待连接…"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
-                        "暂无会话，去电脑端创建一个吧"
-                    } else {
-                        "等待连接…"
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                        Spacer(Modifier.height(12.dp))
+                        CreateSessionButton(
+                            enabled = !creating,
+                            creating = creating,
+                            onClick = { viewModel.createSession(onOpenSession) },
+                        )
+                    }
+                }
             }
         } else {
             LazyColumn(
@@ -96,6 +128,13 @@ fun SessionsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CreateSessionButton(enabled: Boolean, creating: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.TextButton(onClick = onClick, enabled = enabled) {
+        Text(if (creating) "创建中…" else "+ 新会话")
     }
 }
 
