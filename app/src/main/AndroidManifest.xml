@@ -12,7 +12,16 @@
         android:name="android.hardware.camera.any"
         android:required="false" />
 
+    <!-- Android 11+ 包可见性：检测并拉起 UU 远程（uuremote scheme）必须显式声明 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="uuremote" />
+        </intent>
+    </queries>
+
     <application
+        android:name=".ZcodeApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -45,6 +54,15 @@
 
                 <data
                     android:host="remote"
+                    android:scheme="zcode" />
+                <!-- UU 远程绑定/远控回跳（对应 UuRemoteLinks.BIND_CALLBACK / CONTROL_CALLBACK） -->
+                <data
+                    android:host="uuremote"
+                    android:pathPrefix="/bind"
+                    android:scheme="zcode" />
+                <data
+                    android:host="uuremote"
+                    android:pathPrefix="/control"
                     android:scheme="zcode" />
             </intent-filter>
             <intent-filter android:autoVerify="false">
