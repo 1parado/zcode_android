@@ -35,14 +35,25 @@ data class RelayConnectionParams(
     val host: String
         get() = runCatching { source.toHttpUrl().host }.getOrDefault("")
 
-    /** relay websocket URL。对齐 web 客户端 Jc()/pen.connect()。 */
+    /**
+     * relay websocket URL。对齐 web 客户端 Jc()/pen.connect()。
+     * 修复依据(真机 crash 2026-10-17):OkHttp HttpUrl.Builder 只接受 http/https
+     * scheme,直接传 "ws"/"wss" 抛 IllegalArgumentException: unexpected scheme: wss,
+     * 导致扫码即崩溃。OkHttp 的 newWebSocket 会把 http(s) URL 升级为 ws(s),
+     * 因此这里只构造 http/https 形式的 /ws 端点。
+     */
     fun relayWsUrl(): HttpUrl {
         val base = source.toHttpUrl()
-        val builder = HttpUrl.Builder()
-            .scheme(if (isSecure) "wss" else "ws")
-            .host(base.host)
-            .apply { if (base.port != 80 && base.port != 443) port(base.port) }
+        // 二维码路径是 /remote/v4,relay WS 端点是根路径下的 /ws,先清空路径再加
+        val builder = base.newBuilder()
+            .encodedPath("/")
             .addPathSegment("ws")
+            .removeAllQueryParameters("sid")
+            .removeAllQueryParameters("hash")
+            .removeAllQueryParameters("t")
+            .removeAllQueryParameters("mid")
+            .removeAllQueryParameters("name")
+            .removeAllQueryParameters("app_version")
         deviceMid?.let { builder.addQueryParameter("mid", it) }
         return builder.build()
     }

@@ -197,7 +197,15 @@ class RelayClient(
         lastPairStatusAckAt.set(System.currentTimeMillis())
         lastInboundAt.set(System.currentTimeMillis())
         _state.value = if (wasPaired.get()) State.Reconnecting else State.Connecting
-        val request = Request.Builder().url(params.relayWsUrl().toString()).build()
+        // 修复依据(真机 crash 2026-10-17):URL 构造等启动期异常不能逃出协程杀进程,
+        // 统一转 Failure 并停连(与 ZcodeConnection 的 catch 处理一致)
+        val request = try {
+            Request.Builder().url(params.relayWsUrl().toString()).build()
+        } catch (e: Exception) {
+            _failures.tryEmit(Failure("invalid-relay-url", e.message ?: "invalid relay url"))
+            _state.value = State.Error
+            return
+        }
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 _state.value = State.Authenticating
