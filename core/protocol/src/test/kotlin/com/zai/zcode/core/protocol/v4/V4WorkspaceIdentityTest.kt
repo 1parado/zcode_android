@@ -3,14 +3,20 @@ package com.zai.zcode.core.protocol.v4
 import com.zai.zcode.core.protocol.rpc.ChannelClient
 import com.zai.zcode.core.protocol.rpc.RpcProtocol
 import com.zai.zcode.core.protocol.rpc.RpcRequestType
+import com.zai.zcode.core.protocol.rpc.RpcResponseType
+import com.zai.zcode.core.protocol.rpc.RpcMessage
 import com.zai.zcode.core.protocol.rpc.RpcSerialization
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -27,51 +33,69 @@ import org.junit.Test
  */
 class V4WorkspaceIdentityTest {
 
-    private fun headerArgOf(frame: ByteArray): Pair<JsonArray, JsonElement?> {
+    /** 剥掉 13 字节 RPC 物理帧头，解出 [header, body] 两段。 */
+    private fun headerAndBody(frame: ByteArray): Pair<JsonArray, JsonElement?> {
         val (header, body) = RpcSerialization.deserializeTwoSegments(
             frame.copyOfRange(RpcProtocol.HEADER_LENGTH, frame.size),
         )
-        return (header as JsonArray) to body
+        return Pair(header as JsonArray, body)
     }
 
-    private fun clientAndSent(): Pair<ChannelClient, java.util.Collections.ArrayList<ByteArray>> {
-        val sent = java.util.Collections.ArrayList<ByteArray>()
-        val client = ChannelClient(CoroutineScope(Dispatchers.Unconfined))
-        client.onSend = { sent.add(it) }
-        // Initialize → IDLE，否则 request() 的 check(IDLE) 抛异常
-        client.onMessage(
-            com.zai.zcode.core.protocol.rpc.RpcMessage(
-                RpcProtocol.MSG_REGULAR, 0, 0,
-                RpcSerialization.serializeTwoSegments(
-                    kotlinx.serialization.json.buildJsonArray {
-                        add(JsonPrimitive(com.zai.zcode.core.protocol.rpc.RpcResponseType.INITIALIZE))
-                    },
-                    null,
+    private fun initializedClient(sent: MutableList<ByteArray>): ChannelClient =
+        ChannelClient(CoroutineScope(Dispatchers.Unconfined)).apply {
+            onSend = { sent.add(it) }
+            onMessage(
+                RpcMessage(
+                    RpcProtocol.MSG_REGULAR, 0, 0,
+                    RpcSerialization.serializeTwoSegments(
+                        buildJsonArray { add(JsonPrimitive(RpcResponseType.INITIALIZE)) },
+                        null,
+                    ),
                 ),
-            ),
-        )
-        return client to sent
-    }
+            )
+        }
 
-    @Test
-    fun `subscribe carries identity bound by attachFrameListener`() = runBlocking {
-        val (channel, sent) = clientAndSent()
+    /**
+     * 触发一次无应答的 RPC 请求，收集已发出的请求帧。
+     * 服务端不会应答，request() 会挂起，故用 async + 延时后取消，
+     * 只取「已经写到 socket 上的那一帧」。
+     */
+    private fun collectSentWhile(
+        block: suspend ZcodeProtocolV4.() -> Unit,
+    ): List<Pair<JsonArray, JsonElement?>> {
+        val sent = mutableListOf<ByteArray>()
+        val channel = initializedClient(sent)
         val protocol = ZcodeProtocolV4(
             CoroutineScope(Dispatchers.Unconfined), channel, "client-1", "3.6.5",
         )
-        protocol.attachFrameListener(workspacePath = "/ws", workspaceIdentity = "ssh://host/ws")
+        return runBlocking {
+            val deferred = async { protocol.block() }
+            delay(50)
+            deferred.cancel()
+            sent.map { headerAndBody(it) }
+        }
+    }
 
+    private fun subscribeParamsOf(
+        frames: List<Pair<JsonArray, JsonElement?>>,
+        method: String,
+    ): JsonObject {
+        val matches = frames.filter { (header, _) ->
+            header[0].jsonPrimitive.content.toInt() == RpcRequestType.PROMISE &&
+                header[3].jsonPrimitive.content == method
+        }
+        assertEquals(1, matches.size)
+        return matches[0].second as JsonObject
+    }
+
+    @Test
+    fun `subscribe carries identity bound by attachFrameListener`() {
+        val frames = collectSentWhile {
+            attachFrameListener(workspacePath = "/ws", workspaceIdentity = "ssh://host/ws")
+            subscribeSessionsIndex("/ws")
+        }
         // subscribe 未显式传 identity：必须自动带上 attach 时绑定的值
-        val deferred = kotlinx.coroutines.async { protocol.subscribeSessionsIndex("/ws") }
-        // 无服务端应答，request 会挂起；只需取到已发出的请求帧
-        kotlinx.coroutines.delay(50)
-        deferred.cancel()
-
-        val subscribeFrames = sent.map { headerArgOf(it) }
-            .filter { (h, _) -> h[0].jsonPrimitive.content.toInt() == RpcRequestType.PROMISE &&
-                h[3].jsonPrimitive.content == V4.METHOD_SESSIONS_INDEX_SUBSCRIBE }
-        assertEquals(1, subscribeFrames.size)
-        val params = subscribeFrames[0].second as JsonObject
+        val params = subscribeParamsOf(frames, V4.METHOD_SESSIONS_INDEX_SUBSCRIBE)
         assertEquals("/ws", params["workspacePath"]!!.jsonPrimitive.content)
         assertEquals("ssh://host/ws", params["workspaceIdentity"]!!.jsonPrimitive.content)
         // zemote 实测：手机远控观察者必须带 existing-only，否则缺省会拉起新 CLI 进程
@@ -79,19 +103,21 @@ class V4WorkspaceIdentityTest {
     }
 
     @Test
-    fun `no identity bound keeps params identity-free`() = runBlocking {
-        val (channel, sent) = clientAndSent()
-        val protocol = ZcodeProtocolV4(
-            CoroutineScope(Dispatchers.Unconfined), channel, "client-1", "3.6.5",
-        )
-        // 未 attach：不注入 identity（本地 LAN 场景 path 即 key）
-        val deferred = kotlinx.coroutines.async { protocol.subscribeSessionsIndex("/ws") }
-        kotlinx.coroutines.delay(50)
-        deferred.cancel()
+    fun `subscribeConversation also inherits bound identity`() {
+        val frames = collectSentWhile {
+            attachFrameListener(workspacePath = "/ws", workspaceIdentity = "ssh://host/ws")
+            subscribeConversation("/ws", "sess-1")
+        }
+        val params = subscribeParamsOf(frames, V4.METHOD_CONVERSATION_SUBSCRIBE)
+        assertEquals("ssh://host/ws", params["workspaceIdentity"]!!.jsonPrimitive.content)
+        assertEquals("sess-1", params["sessionId"]!!.jsonPrimitive.content)
+    }
 
-        val params = sent.map { headerArgOf(it) }
-            .first { (h, _) -> h[3].jsonPrimitive.content == V4.METHOD_SESSIONS_INDEX_SUBSCRIBE }
-            .second as JsonObject
+    @Test
+    fun `no identity bound keeps params identity-free`() {
+        val frames = collectSentWhile { subscribeSessionsIndex("/ws") }
+        // 未 attach：不注入 identity（本地 LAN 场景 path 即 key）
+        val params = subscribeParamsOf(frames, V4.METHOD_SESSIONS_INDEX_SUBSCRIBE)
         assertNull(params["workspaceIdentity"])
         assertEquals("/ws", params["workspacePath"]!!.jsonPrimitive.content)
     }
@@ -107,5 +133,15 @@ class V4WorkspaceIdentityTest {
         assertEquals(V4.WIRE_PROTOCOL_VERSION, hello["protocolVersion"]!!.jsonPrimitive.content.toInt())
         // host 未宣告 workflowRunDeltas 时不得许诺（服务端 capabilities 是 strict 校验）
         assertNull(hello["capabilities"])
+    }
+
+    @Test
+    fun `clientHello promises workflowRunDeltas only when host declared it`() {
+        // host 宣告 workflowRunDeltas 时才许诺：capabilities 是嵌套对象，
+        // 且服务端对 clientHello 是 strict 校验，未宣告而许诺会整条解析失败。
+        val withCaps = buildClientHello("client-1", "3.6.5", true)
+        val caps = withCaps["capabilities"] as JsonObject
+        assertEquals(true, caps["workflowRunDeltas"]!!.jsonPrimitive.boolean)
+        assertEquals("mobileApp", withCaps["clientKind"]!!.jsonPrimitive.content)
     }
 }
