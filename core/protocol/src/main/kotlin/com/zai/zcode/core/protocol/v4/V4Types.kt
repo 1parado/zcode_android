@@ -245,6 +245,23 @@ fun buildWorkspaceTarget(
 }
 
 /**
+ * workspaceKey 归一：服务端 key = workspaceIdentity?.trim() || workspacePath
+ * （AGENTS.md「Workspace Identity」）。
+ *
+ * 修复依据（真机 v0.2.14「创建会话失败 / 会话建到别的工作区」）：createSession 的
+ * payload.workspaceId 必须是这个 key，而不是裸 workspacePath。对齐 zemote
+ * lib/ui/main_shell.dart:18 的 workspaceKeyOf（注释明写 "key = workspaceIdentity?.trim()
+ * || workspacePath"，mirrors web client 的 HC()）；桌面 useDraftSessionPrewarm.ts:76
+ * 同样填 workspaceKey。远程链路 identity 与 path 不同值，填 path 会让新会话落到
+ * 另一个工作区（sessions-index topic 也跟着分叉，新会话不出现在当前列表）。
+ */
+fun workspaceKeyOf(workspacePath: String, workspaceIdentity: String? = null): String {
+    val identity = workspaceIdentity?.trim().orEmpty()
+    if (identity.isNotEmpty()) return identity
+    return workspacePath.trim()
+}
+
+/**
  * subscribeConversationV4 参数（ZCodeAgentConversationSubscribeParams = SessionTarget + base/visibility）。
  * 不携带 connectionId/clientMode/topic——那些由 host 从 workspacePath+sessionId 注入 wire identity。
  */

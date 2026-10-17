@@ -82,6 +82,11 @@ class ZcodeConnection(
         private const val WS_PING_INTERVAL_S = 20L
         // 等 Initialize 帧的超时（P0-C）：正常几百毫秒内到达，半开连接靠此兜底
         private const val WS_IDLE_TIMEOUT_MS = 15_000L
+        // createSession 应答超时：CLI runtime 首次预热可能远超 15s。
+        // 修复依据(真机 v0.2.14"创建会话失败"):zemote conversation.dart:258 给 90s,
+        // 且 chat_page.dart:675 提示"首次可能需要预热"。超时会被转成 PromiseCancel,
+        // 服务端收到 cancel 后不落 record。
+        private const val CREATE_SESSION_TIMEOUT_MS = 90_000L
         const val TOKEN_QUERY = "token"
         const val TOKEN_COOKIE = "zcode_lite_token"
     }
@@ -685,9 +690,14 @@ class ZcodeConnection(
     suspend fun createSession(firstInput: String? = null): String? {
         val p = _protocol.value ?: return null
         val ws = _currentWorkspace.value ?: return null
+        // 修复依据(真机 v0.2.14"创建会话失败/新会话不出现在列表"):workspaceId 必须是
+        // workspaceKey(identity.trim()||path),不是裸 workspacePath。对齐 zemote
+        // main_shell.dart:18 workspaceKeyOf 与桌面 useDraftSessionPrewarm.ts:76。
+        // 远程链路 identity≠path,填 path 会让会话落到另一工作区。
+        val wsIdentity = relayWorkspaceIdentity[ws.path]
         return runCatching {
             val payload = buildJsonObject {
-                put("workspaceId", ws.path)
+                put("workspaceId", com.zai.zcode.core.protocol.v4.workspaceKeyOf(ws.path, wsIdentity))
                 if (!firstInput.isNullOrBlank()) {
                     put("firstInput", buildJsonObject { put("text", firstInput) })
                 }
@@ -699,7 +709,10 @@ class ZcodeConnection(
                 type = "createSession",
                 payload = payload,
             )
-            val ack = p.sendCommand(ws.path, envelope, relayWorkspaceIdentity[ws.path])
+            // 修复依据(真机 v0.2.14"创建会话失败"):CLI runtime 首次预热可能远超默认
+            // 15s,超时会被转成 PromiseCancel 导致服务端不落 record。zemote 对
+            // createSession 单独给 90s(conversation.dart:258)。
+            val ack = p.sendCommand(ws.path, envelope, wsIdentity, timeoutMs = CREATE_SESSION_TIMEOUT_MS)
             if (ack.status != "accepted") {
                 ZLog.w(TAG, "createSession rejected: ${ack.status} ${ack.reasonCode ?: ""} ${ack.message ?: ""}")
                 return@runCatching null

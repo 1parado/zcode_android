@@ -209,11 +209,19 @@ class ZcodeProtocolV4(
     /**
      * 发送命令（envelope 由 [buildCommandEnvelope] 构造，clientId 必须等于握手绑定的
      * [clientId]，否则 fault.command.clientMismatch）。返回 commandAck。
+     *
+     * @param timeoutMs 命令应答超时。
+     * 修复依据（真机 v0.2.14「创建会话失败」）：createSession 走的也是本方法，而
+     * 默认 15s 撑不过 CLI runtime 首次预热（zemote conversation.dart:258 给
+     * createSession 单独 90s，chat_page.dart:675 还提示"首次可能需要预热"）。
+     * 超时会被 [ChannelClient.request] 转成 PromiseCancel，服务端收到 cancel 后
+     * 不再落 record，表现为"创建失败"。
      */
     suspend fun sendCommand(
         workspacePath: String,
         envelope: JsonObject,
         workspaceIdentity: String? = null,
+        timeoutMs: Long = 15_000,
     ): CommandAck {
         val identity = workspaceIdentity ?: boundWorkspaceIdentity
         val params = buildJsonObject {
@@ -223,7 +231,7 @@ class ZcodeProtocolV4(
         }
         // 说明：buildJsonObject 内的 put(String, String) 来自 kotlinx.serialization.json
         // 的 JsonObjectBuilder.put 扩展，漏 import 时会误报 "String 但期望 JsonElement"。
-        val result = channel.request(V4.CHANNEL_ZCODE_AGENT, V4.METHOD_COMMAND, params)
+        val result = channel.request(V4.CHANNEL_ZCODE_AGENT, V4.METHOD_COMMAND, params, timeoutMs)
         return CommandAck(raw = resultAsObject(result))
     }
 

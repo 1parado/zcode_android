@@ -6,6 +6,7 @@ import com.zai.zcode.core.protocol.rpc.RpcRequestType
 import com.zai.zcode.core.protocol.rpc.RpcResponseType
 import com.zai.zcode.core.protocol.rpc.RpcMessage
 import com.zai.zcode.core.protocol.rpc.RpcSerialization
+import com.zai.zcode.core.protocol.rpc.asBooleanOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -38,7 +39,8 @@ class V4WorkspaceIdentityTest {
         val (header, body) = RpcSerialization.deserializeTwoSegments(
             frame.copyOfRange(RpcProtocol.HEADER_LENGTH, frame.size),
         )
-        return Pair(header as JsonArray, body)
+        // deserializeTwoSegments 返回 Pair<Any?, Any?>，需显式收窄到 JsonElement
+        return Pair(header as JsonArray, body as? JsonElement)
     }
 
     private fun initializedClient(sent: MutableList<ByteArray>): ChannelClient =
@@ -141,7 +143,20 @@ class V4WorkspaceIdentityTest {
         // 且服务端对 clientHello 是 strict 校验，未宣告而许诺会整条解析失败。
         val withCaps = buildClientHello("client-1", "3.6.5", true)
         val caps = withCaps["capabilities"] as JsonObject
-        assertEquals(true, caps["workflowRunDeltas"]!!.jsonPrimitive.boolean)
+        assertEquals(true, caps["workflowRunDeltas"].asBooleanOrNull())
         assertEquals("mobileApp", withCaps["clientKind"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `workspaceKeyOf prefers trimmed identity over path`() {
+        // 修复依据（真机 v0.2.14「创建会话失败」）：createSession payload.workspaceId
+        // 必须是 workspaceKey 而非裸 workspacePath。对齐 zemote main_shell.dart:18。
+        assertEquals("ssh://host/ws", workspaceKeyOf("/ws", "ssh://host/ws"))
+        // 服务端归一做的是 identity.trim()：带空白的 identity 同样优先且要去空白
+        assertEquals("ssh://host/ws", workspaceKeyOf("/ws", "  ssh://host/ws  "))
+        // 空白 identity 视为缺席，回落 path
+        assertEquals("/ws", workspaceKeyOf("/ws", "   "))
+        assertEquals("/ws", workspaceKeyOf("/ws", null))
+        assertEquals("/ws", workspaceKeyOf("/ws", ""))
     }
 }
