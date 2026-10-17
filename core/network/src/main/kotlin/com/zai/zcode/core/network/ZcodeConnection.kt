@@ -13,8 +13,10 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
@@ -74,6 +76,8 @@ class ZcodeConnection(
         private const val RECONNECT_MAX_MS = 30_000L
         private const val HTTP_TIMEOUT_S = 10L
         private const val WS_PING_INTERVAL_S = 20L
+        // 等 Initialize 帧的超时（P0-C）：正常几百毫秒内到达，半开连接靠此兜底
+        private const val WS_IDLE_TIMEOUT_MS = 15_000L
         const val TOKEN_QUERY = "token"
         const val TOKEN_COOKIE = "zcode_lite_token"
     }
@@ -87,6 +91,14 @@ class ZcodeConnection(
 
     private val _serverInfo = MutableStateFlow<ServerInfo?>(null)
     val serverInfo: StateFlow<ServerInfo?> = _serverInfo.asStateFlow()
+
+    /**
+     * 当前 workspace 的单一 owner（评审 P2-5：原先 ChatViewModel/SessionsViewModel 各自
+     * 从 serverInfo.workspaces.firstOrNull() 推导，重复三处）。Ready 时派生第一个
+     * workspace；feature 只消费，不再自行推导。
+     */
+    private val _currentWorkspace = MutableStateFlow<ServerInfo.Workspace?>(null)
+    val currentWorkspace: StateFlow<ServerInfo.Workspace?> = _currentWorkspace.asStateFlow()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(HTTP_TIMEOUT_S, TimeUnit.SECONDS)
@@ -167,13 +179,31 @@ class ZcodeConnection(
                 _state.value = State.ConnectingWs(url)
                 openWebSocket(url, token)
 
+                // 修复依据（P0-C，评审 2026-10-17）：newWebSocket 立即返回，WS 异步建立；
+                // 服务端 Initialize 帧到达前 ChannelClient 仍是 UNINITIALIZED，此刻
+                // request() 的 check(IDLE) 必然抛异常 → 无限重连循环。
+                // 必须挂起等待 IDLE（带超时兜底防 WS 半开永久挂起）再握手。
+                val wsChannel = channel ?: throw IllegalStateException("channel missing after ws open")
+                withTimeout(WS_IDLE_TIMEOUT_MS) {
+                    wsChannel.state.first { it == ChannelClient.State.IDLE }
+                }
+
                 _state.value = State.Handshaking
-                val protocol = channel?.let { ch ->
-                    ZcodeProtocolV4(scope, ch, clientId, appVersion)
-                } ?: throw IllegalStateException("channel missing after ws open")
+                val protocol = ZcodeProtocolV4(scope, wsChannel, clientId, appVersion)
                 protocol.handshake()
                 _protocol.value = protocol
+
+                // 修复依据（P1-A，评审 2026-10-17）：attachFrameListener（EventListen）此前
+                // 全仓库无调用者——subscribe 只建 topic，服务端只向已 listen 的动态事件
+                // 发 EventFire，导致一行流式数据都收不到。事件监听是连接生命周期的一
+                // 部分，由拥有生命周期的本类在进入 Ready 时自动挂上，不让每个 feature 记着挂。
+                val workspace = info.workspaces.firstOrNull()?.path
+                if (workspace != null) {
+                    protocol.attachFrameListener(workspacePath = workspace)
+                }
+
                 _state.value = State.Ready(info)
+                _currentWorkspace.value = info.workspaces.firstOrNull()
                 reconnectAttempt = 0
                 ZLog.i(TAG, "connection ready: ${info.serverId} v${info.version}")
             } catch (e: Exception) {

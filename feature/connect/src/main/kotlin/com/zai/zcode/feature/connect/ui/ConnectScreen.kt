@@ -42,9 +42,13 @@ fun ConnectScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    // Ready → 通知宿主导航（幂等：状态保持 Ready 期间只触发一次由导航图去重）
-    if (state.serverInfo != null && !state.connecting) {
-        androidx.compose.runtime.LaunchedEffect(state.serverInfo) { onConnected() }
+    // 修复依据（P1-C，评审 2026-10-17）：导航由"本次连接成功"边沿（justConnected）驱动，
+    // 而非"当前是 Ready"——否则从 Sessions 点设置重进本页会瞬间被弹回，改不了地址。
+    if (state.justConnected) {
+        androidx.compose.runtime.LaunchedEffect(state.justConnected) {
+            viewModel.consumeJustConnected()
+            onConnected()
+        }
     }
 
     Column(

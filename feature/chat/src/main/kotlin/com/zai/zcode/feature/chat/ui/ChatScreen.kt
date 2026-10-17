@@ -107,7 +107,9 @@ fun ChatScreen(
                 placeholder = { Text("发送消息…") },
                 maxLines = 4,
             )
-            if (ui.phase?.contains("run", ignoreCase = true) == true) {
+            // 修复依据（P3，评审 2026-10-17）：phase 是封闭枚举，isRunning 由
+            // ChatRepository 映射（draft/prewarming/running），UI 不猜子串
+            if (ui.isRunning) {
                 // 运行中：显示停止按钮
                 IconButton(onClick = viewModel::stop) {
                     Text("⏹", style = MaterialTheme.typography.titleLarge)

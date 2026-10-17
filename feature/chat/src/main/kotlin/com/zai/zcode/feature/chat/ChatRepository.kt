@@ -2,6 +2,8 @@ package com.zai.zcode.feature.chat
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.rpc.asLongOrNull
+import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import com.zai.zcode.core.protocol.v4.RowView
 import com.zai.zcode.core.protocol.v4.TopicFrame
 import com.zai.zcode.core.protocol.v4.ZcodeProtocolV4
@@ -39,6 +41,9 @@ class ChatRepository(
         val rows: List<ChatRow> = emptyList(),
         val revision: Long? = null,
         val phase: String? = null,
+        /** phase 是封闭枚举（sessionPhaseSchema：draft/prewarming/running/completed*/error），
+         *  UI 运行态判定不猜子串（评审 P3）。 */
+        val isRunning: Boolean = false,
     )
 
     private val reducer = com.zai.zcode.core.protocol.v4.ConversationReducer()
@@ -89,12 +94,14 @@ class ChatRepository(
         val revision = st.state?.get("revision")
         _ui.value = ChatUi(
             rows = st.rows.map { row -> toChatRow(row) },
-            revision = (revision as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull(),
-            phase = st.state?.get("phase")?.let {
-                (it as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { p ->
-                    p !is kotlinx.serialization.json.JsonNull
-                }?.content
-            },
+            // 修复依据（P2-6，评审 2026-10-17）：复用 rpc 包 canonical helper，
+            // 不再手写 (x as? JsonPrimitive)?.content 解析
+            revision = revision.asLongOrNull(),
+            phase = st.state?.get("phase").asStringOrNull(),
+            // 修复依据（P3，评审 2026-10-17）：phase 是封闭枚举，运行态在此映射，
+            // 不在 UI 里 contains("run") 猜子串
+            isRunning = st.state?.get("phase").asStringOrNull()
+                ?.let { it == "draft" || it == "prewarming" || it == "running" } == true,
         )
     }
 

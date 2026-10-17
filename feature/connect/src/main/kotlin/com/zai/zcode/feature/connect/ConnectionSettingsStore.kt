@@ -1,6 +1,7 @@
 package com.zai.zcode.feature.connect
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -24,13 +25,14 @@ class ConnectionSettingsStore(private val context: Context) {
 
     private val KEY_URL = stringPreferencesKey("server_url")
     private val KEY_WORKSPACE = stringPreferencesKey("workspace_path")
-    private val KEY_HAS_TOKEN = stringPreferencesKey("has_token")
+    // 修复依据（P3，评审 2026-10-17）：布尔标记用 booleanPreferencesKey，不再存 "1"/"0" 字符串
+    private val KEY_HAS_TOKEN = booleanPreferencesKey("has_token")
 
     val config: Flow<ConnectionConfig> = context.dataStore.data.map { prefs ->
         ConnectionConfig(
             serverUrl = prefs[KEY_URL] ?: "",
             workspacePath = prefs[KEY_WORKSPACE] ?: "",
-            hasToken = prefs[KEY_HAS_TOKEN] == "1",
+            hasToken = prefs[KEY_HAS_TOKEN] ?: false,
         )
     }
 
@@ -38,7 +40,7 @@ class ConnectionSettingsStore(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_URL] = config.serverUrl
             prefs[KEY_WORKSPACE] = config.workspacePath
-            prefs[KEY_HAS_TOKEN] = if (config.hasToken) "1" else "0"
+            prefs[KEY_HAS_TOKEN] = config.hasToken
         }
     }
 }

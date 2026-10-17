@@ -148,6 +148,27 @@ class ChannelClient(
     }
 
     /**
+     * 发送 cancel/dispose（PromiseCancel / EventDispose）。
+     * 修复依据（P3，评审 2026-10-17）：TS sendCancelOrDispose 的 header 是两元素
+     * [type, id]；服务端按 index 取值，多带 channelName 虽当前无害，但目标是逐字
+     * 对齐 TS，故 cancel/dispose 与 TS 同形。
+     */
+    private fun sendCancelOrDispose(type: Int, id: Int) {
+        val header = buildJsonArray {
+            add(JsonPrimitive(type))
+            add(JsonPrimitive(id))
+        }
+        val body = RpcSerialization.serializeTwoSegments(header, null)
+        val frame = encodeRpcMessage(
+            RpcProtocol.MSG_REGULAR,
+            id,
+            ackCounter.getAndIncrement().toInt(),
+            body,
+        )
+        onSend?.invoke(frame)
+    }
+
+    /**
      * 发起一次 Promise 请求。成功返回 data 段；服务端错误抛 [PromiseErrorException]。
      */
     suspend fun request(
@@ -171,8 +192,9 @@ class ChannelClient(
         } catch (e: Exception) {
             // 修复依据（P2-2）：客户端超时/取消后应发 PromiseCancel(101)，服务端不再做无用功
             //（对齐 channels.shared.ts:20 的 promise cancel 语义）。
+            // 修复依据（P3）：header 用 [101, id] 两元素，与 TS sendCancelOrDispose 同形。
             try {
-                send(RpcRequestType.PROMISE_CANCEL, id, channelName, null, null)
+                sendCancelOrDispose(RpcRequestType.PROMISE_CANCEL, id)
             } catch (_: Exception) {
                 // socket 已断：cancel 发不出去也无妨
             }
@@ -196,7 +218,9 @@ class ChannelClient(
 
     fun disposeEvent(id: Int) {
         val channelName = eventListeners.remove(id) ?: return
-        send(RpcRequestType.EVENT_DISPOSE, id, channelName, null, null)
+        // 修复依据（P3，评审 2026-10-17）：与 TS sendCancelOrDispose 同形 [type, id]，
+        // 不再多带 channelName。channelName 仅用于本地事件路由记账。
+        sendCancelOrDispose(RpcRequestType.EVENT_DISPOSE, id)
     }
 
     fun close() {

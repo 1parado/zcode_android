@@ -14,14 +14,14 @@ ZCode 的原生 Android 客户端（Kotlin + Jetpack Compose），目标是局�
 
 ```
 app                    # 壳工程：导航、主题、入口
-core/common            # 日志、JSON 等基础工具
+core/common            # 日志、JSON、ClientIdProvider 等基础工具
 core/protocol          # RPC 二进制协议 + V4 会话协议（纯 JVM，可单测）
-core/network           # 网络层（开发中）
-core/design            # 设计系统（开发中）
-feature/connect        # 连接/配对（开发中）
-feature/sessions       # 会话列表（开发中）
-feature/chat           # 对话（开发中）
-feature/uuremote       # UU 远程集成
+core/network           # 连接状态机：发现/认证/WS/握手/重连 + workspace 单一 owner
+core/design            # 设计系统：ZcodeTheme、颜色与形状令牌
+feature/connect        # 连接/配对页（含 DataStore 设置与加密 token 存储、扫码）
+feature/sessions       # 会话列表页（sessions-index 订阅与归约）
+feature/chat           # 对话页（流式收发、命令信封）
+feature/uuremote       # UU 远程集成（绑定/远控深链）
 ```
 
 ## 构建

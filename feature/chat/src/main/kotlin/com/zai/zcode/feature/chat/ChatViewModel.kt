@@ -7,7 +7,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zai.zcode.core.common.ClientIdProvider
-import com.zai.zcode.core.network.ConnectionFacade
+import com.zai.zcode.core.network.ZcodeConnection
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -15,17 +15,19 @@ import javax.inject.Inject
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    connectionFacade: ConnectionFacade,
+    // 修复依据（P2-1，评审 2026-10-17）：删除 ConnectionFacade 双层包装，直接注入单例连接
+    private val connection: ZcodeConnection,
     private val clientIds: ClientIdProvider,
 ) : ViewModel() {
 
     val sessionId: String = savedStateHandle.get<String>("sessionId").orEmpty()
+    // 修复依据（P2-5）：workspace 由 ZcodeConnection.currentWorkspace 单一派生，feature 不再自推
     private val workspacePath: String =
-        connectionFacade.connection.serverInfo.value?.workspaces?.firstOrNull()?.path ?: ""
+        connection.currentWorkspace.value?.path ?: connection.serverInfo.value?.workspaces?.firstOrNull()?.path ?: ""
 
     private val repository = ChatRepository(
         scope = viewModelScope,
-        connection = connectionFacade.connection,
+        connection = connection,
         sessionId = sessionId,
         workspacePath = workspacePath,
         clientId = clientIds.clientId,
@@ -54,8 +56,9 @@ class ChatViewModel @Inject constructor(
             val ok = repository.sendText(text)
             sending = false
             if (!ok) {
-                // 发送失败：回滚草稿让用户重试（乐观清空的补偿）
-                if (draft.isEmpty()) draft = text
+                // 修复依据（P3，评审 2026-10-17）：发送期间用户若已输入新文本，直接覆盖会
+                // 静默丢新草稿；改为把失败文本换行拼回尾部，两者都保留
+                draft = if (draft.isEmpty()) text else "$draft\n$text"
             }
         }
     }

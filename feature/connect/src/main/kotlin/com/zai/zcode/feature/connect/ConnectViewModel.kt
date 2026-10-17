@@ -23,6 +23,11 @@ data class ConnectUiState(
     val connecting: Boolean = false,
     val error: String? = null,
     val serverInfo: ServerInfo? = null,
+    /**
+     * 本次表单发起的连接已成功（边沿信号，评审 P1-C：导航不能由"当前是 Ready"驱动，
+     * 否则从 Sessions 点设置进来瞬间被弹回；由 connect() 置位、UI 消费后复位）。
+     */
+    val justConnected: Boolean = false,
 )
 
 /**
@@ -59,6 +64,9 @@ class ConnectViewModel @Inject constructor(
                         connecting = false,
                         error = null,
                         serverInfo = state.serverInfo,
+                        // 修复依据（P1-C）：只在本次表单发起连接期间到达 Ready 才置位，
+                        // 重进设置页（state 本来就是 Ready）不再触发导航
+                        justConnected = s.connecting,
                     )
                     is ZcodeConnection.State.Failed -> s.copy(
                         connecting = false,
@@ -96,6 +104,11 @@ class ConnectViewModel @Inject constructor(
     }
 
     fun disconnect() = connection.disconnect()
+
+    /** UI 消费 justConnected 边沿后复位（P1-C）。 */
+    fun consumeJustConnected() {
+        _uiState.value = _uiState.value.copy(justConnected = false)
+    }
 
     fun update(f: (ConnectUiState) -> ConnectUiState) {
         _uiState.value = f(_uiState.value)

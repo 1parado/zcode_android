@@ -64,6 +64,10 @@ class UuRemoteCallbackRouter {
 
     /** 发起绑定前调用；返回挂起的 Deferred。 */
     fun expectBind(nonce: String): kotlinx.coroutines.CompletableDeferred<UuBindResult> {
+        // 修复依据（P2-8，评审 2026-10-17）：协议约束"同一时刻只处理一个请求"；
+        // 直接覆盖会让前一个调用方等满 3min 超时。覆盖前先把旧 Deferred 以
+        // SUPERSEDED 完成，让等待方立即返回。
+        bindDeferred?.complete(UuBindResult.Error(UuErrorReason.SUPERSEDED))
         val d = kotlinx.coroutines.CompletableDeferred<UuBindResult>()
         bindDeferred = d
         bindNonce = nonce
@@ -72,6 +76,8 @@ class UuRemoteCallbackRouter {
 
     /** 发起小窗远控前调用。 */
     fun expectControl(): kotlinx.coroutines.CompletableDeferred<UuControlResult> {
+        // 修复依据（P2-8）：同 expectBind，覆盖前完成旧请求
+        controlDeferred?.complete(UuControlResult.Error(UuErrorReason.SUPERSEDED))
         val d = kotlinx.coroutines.CompletableDeferred<UuControlResult>()
         controlDeferred = d
         return d

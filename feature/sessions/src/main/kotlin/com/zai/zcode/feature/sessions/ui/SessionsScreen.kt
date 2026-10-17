@@ -146,12 +146,13 @@ private fun SessionCard(item: SessionsRepository.SessionItem, onClick: () -> Uni
     }
 }
 
-/** phase → 状态圆点（运行中绿色、思考紫色、其余灰）。 */
+/** phase → 状态圆点（运行中绿色、其余灰）。
+ * 修复依据（P3，评审 2026-10-17）：phase 是封闭枚举（draft/prewarming/running/
+ * completedSuccess/completedInterrupted/error），不做魔法子串匹配。 */
 @Composable
 private fun PhaseDot(phase: String) {
-    val color = when {
-        phase.contains("run", ignoreCase = true) -> com.zai.zcode.core.design.StreamingGreen
-        phase.contains("think", ignoreCase = true) -> MaterialTheme.colorScheme.primary
+    val color = when (phase) {
+        "draft", "prewarming", "running" -> com.zai.zcode.core.design.StreamingGreen
         else -> MaterialTheme.colorScheme.outline
     }
     Box(

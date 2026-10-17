@@ -1,7 +1,6 @@
 package com.zai.zcode.feature.connect.di
 
 import com.zai.zcode.core.common.ClientIdProvider
-import com.zai.zcode.core.network.ConnectionHolder
 import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.feature.connect.ConnectionSettingsStore
 import com.zai.zcode.feature.connect.SecureTokenStore
@@ -41,9 +40,8 @@ object ConnectModule {
         appVersion = "0.2.0",
     )
 
-    @Provides
-    @Singleton
-    fun connectionHolder(conn: ZcodeConnection): ConnectionHolder = ConnectionHolder(conn)
+    // 修复依据（P2-1，评审 2026-10-17）：删除 ConnectionHolder + ConnectionFacade 双层
+    // 包装。ZcodeConnection 已是 @Singleton 状态机门面，feature 直接注入它。
 
     // 修复 CI Dagger/MissingBinding：两个 Store 需要构造注入，补 @Provides 绑定
     @Provides
