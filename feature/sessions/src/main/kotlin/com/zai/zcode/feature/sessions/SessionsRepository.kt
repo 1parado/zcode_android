@@ -2,18 +2,48 @@ package com.zai.zcode.feature.sessions
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.rpc.PromiseErrorException
 import com.zai.zcode.core.protocol.rpc.asIntOrNull
 import com.zai.zcode.core.protocol.v4.SessionSummaryView
 import com.zai.zcode.core.protocol.v4.SessionsIndexReducer
 import com.zai.zcode.core.protocol.v4.TopicFrame
+import com.zai.zcode.core.protocol.v4.V4
 import com.zai.zcode.core.protocol.v4.ZcodeProtocolV4
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 private const val TAG = "SessionsRepository"
+
+/**
+ * 列表加载态：区分「空」与「没加载出来」。
+ *
+ * 修复依据（真机 v0.2.17「看不到工作区下已有的会话」）：sessions-index 用的是
+ * `runtimePolicy:"existing-only"`——桌面没有为该 workspace 运行 CLI 时，服务端直接抛
+ * `ZCODE_AGENT_RUNTIME_UNAVAILABLE`（zcodeAgentService.ts:939，注释明写「绝不为观察者
+ * 拉起新进程」）。原实现 catch 后只打一行 warn 就把列表置空，UI 显示「暂无任务」，
+ * 用户看到的是"我的历史会话没了"，实际是"电脑端 runtime 没起来"。两者必须分开表达。
+ */
+enum class SessionsListState {
+    /** 首次订阅尚未返回。 */
+    Loading,
+
+    /** 订阅成功（列表可能为空，那是真的没有会话）。 */
+    Ready,
+
+    /** 电脑端该工作区的 runtime 没有运行——等它起来后会自动重订阅。 */
+    RuntimeUnavailable,
+
+    /** 其它订阅/重同步错误。 */
+    Error,
+}
+
+/** 订阅重试退避（末位即稳态间隔）：runtime 冷启动常见耗时在 10s 量级。 */
+private val SUBSCRIBE_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
 
 /**
  * 会话列表数据源：持有 [SessionsIndexReducer]，把 V4 sessions-index 帧归约成
@@ -58,6 +88,17 @@ class SessionsRepository(
     // 本地 pinned/seen 注入后的合并视图（wire 列表 + 本地状态）
     private val _sessions = MutableStateFlow<List<SessionItem>>(emptyList())
     val sessions: StateFlow<List<SessionItem>> = _sessions.asStateFlow()
+
+    /** 列表加载态（[SessionsListState]）：空列表与"没加载出来"是两件事。 */
+    private val _listState = MutableStateFlow(SessionsListState.Loading)
+    val listState: StateFlow<SessionsListState> = _listState.asStateFlow()
+
+    /** 订阅重试退避阶梯下标；成功订阅后归零。 */
+    private var retryDelayIndex = 0
+    /** 退避重试协程：同一时刻只允许一个在跑（重订阅时取消旧的）。 */
+    private var retryJob: Job? = null
+    /** 已成功订阅过一次：骨架屏只在首次出现，重试期间保留旧列表不闪。 */
+    private var hasDeliveredSnapshot = false
 
     /** ViewModel 接线本地状态源（手工 DI：SessionsRepository 由 VM 手工构造）。 */
     fun attachLocalState(store: SessionLocalStateStore, scope: CoroutineScope) {
@@ -117,7 +158,26 @@ class SessionsRepository(
         reducer.reset()
         subscribedProtocol = null // 触发重订阅
         subscribedWorkspace = null
+        // 换工作区 = 换一张列表：旧列表与旧水位都不再适用，骨架屏要重新出现。
+        hasDeliveredSnapshot = false
+        republish()
         connection.protocol.value?.let { subscribe(it, path) }
+    }
+
+    /**
+     * 用户点了「重试」：丢掉退避阶梯立刻重订阅一次。
+     * 机器 succeeded 之外的所有态都能重试——runtime-unavailable 等的是桌面，
+     * Error 等的是网络，两者用户侧动作都是「再试一次」。
+     */
+    fun retrySubscribe() {
+        val p = connection.protocol.value ?: return
+        val ws = _workspacePath.value ?: return
+        retryJob?.cancel()
+        retryJob = null
+        retryDelayIndex = 0
+        subscribedProtocol = null
+        subscribedWorkspace = null
+        subscribe(p, ws)
     }
 
     private fun onProtocolReady(p: ZcodeProtocolV4) {
@@ -131,6 +191,11 @@ class SessionsRepository(
         subscribedProtocol = null
         subscribedWorkspace = null
         sessionsSubscriptionId = null
+        retryJob?.cancel()
+        retryJob = null
+        retryDelayIndex = 0
+        hasDeliveredSnapshot = false
+        _listState.value = SessionsListState.Loading
         // 保留 _sessions 显示旧数据 + 顶栏显示重连状态
     }
 
@@ -139,17 +204,95 @@ class SessionsRepository(
         if (subscribedProtocol === p && subscribedWorkspace == ws) return
         subscribedProtocol = p
         subscribedWorkspace = ws
+        retryJob?.cancel()
+        retryJob = null
+        retryDelayIndex = 0
+        _listState.value = if (hasDeliveredSnapshot) SessionsListState.Ready else SessionsListState.Loading
+        requestSubscribe(p, ws)
+    }
+
+    /**
+     * 一次订阅尝试；失败后按退避阶梯重试（[scheduleSubscribeRetry]）。
+     *
+     * 修复依据（真机 v0.2.17「看不到工作区下已有的会话」）：existing-only 在桌面没有
+     * 活跃 runtime 时必然失败一次，而 runtime 是用户打开电脑端/切到该工作区后才起来的。
+     * 一次性订阅意味着"手机先开、电脑后开"这个最常见的顺序永远列表为空。桌面
+     * windowHostSessionsIndexObserver.ts:300 就是 dormant + 等 runtime 起来重订阅，
+     * 这里对齐同一语义（没有 lifecycle 事件可挂，退避重试是等价的兜底）。
+     */
+    private fun requestSubscribe(p: ZcodeProtocolV4, ws: String) {
         scope.launch {
             try {
                 val ack = p.subscribeSessionsIndex(ws, workspaceIdentity)
                 sessionsSubscriptionId = ack.subscriptionId
+                retryDelayIndex = 0
                 ZLog.i(TAG, "subscribed sessions-index for $ws")
+                // 注意：此时还没收到 snapshot，不能置 Ready——UI 骨架屏要留到首帧到达。
+                // snapshot 由 applyFrame → publish 置位。
             } catch (e: Exception) {
-                ZLog.w(TAG, "sessions-index subscribe failed: ${e.message}")
+                if (!isRuntimeUnavailable(e)) {
+                    ZLog.w(TAG, "sessions-index subscribe failed: ${e.message}")
+                }
                 subscribedProtocol = null
                 subscribedWorkspace = null
+                scheduleSubscribeRetry(ws, e)
             }
         }
+    }
+
+    /**
+     * 订阅失败退避重试。runtime unavailable 是"可以等"的稳态，退避到 60s 后仍在重试；
+     * 其它错误重试同样有意义（桌面短暂不可达），但 UI 按错误态呈现。
+     */
+    private fun scheduleSubscribeRetry(ws: String, error: Exception) {
+        val unavailable = isRuntimeUnavailable(error)
+        _listState.value = if (unavailable) SessionsListState.RuntimeUnavailable else SessionsListState.Error
+        // 修复依据（spec §5.2 离线态 + 真机 v0.2.17）：runtime 不在时**不清列表**。
+        // 会话是落盘的实体，runtime 停了它们还在；上一份快照除了 phase 之外依然准确，
+        // 清空等于把"加载中"谎报成"没有任务"。UI 侧降饱和表达陈旧，这里保留数据。
+        if (retryJob?.isActive == true) return
+        retryJob = scope.launch {
+            while (true) {
+                val delayMs = SUBSCRIBE_RETRY_DELAYS_MS[
+                    retryDelayIndex.coerceAtMost(SUBSCRIBE_RETRY_DELAYS_MS.lastIndex)
+                ]
+                retryDelayIndex++
+                delay(delayMs)
+                val p = connection.protocol.value ?: continue
+                // 退避期间 workspace 可能已切换：只重试当前 workspace。
+                if (_workspacePath.value != ws) return@launch
+                try {
+                    val ack = p.subscribeSessionsIndex(ws, workspaceIdentity)
+                    subscribedProtocol = p
+                    subscribedWorkspace = ws
+                    sessionsSubscriptionId = ack.subscriptionId
+                    retryDelayIndex = 0
+                    ZLog.i(TAG, "sessions-index subscribe recovered for $ws")
+                    return@launch
+                } catch (e: Exception) {
+                    if (!isRuntimeUnavailable(e)) {
+                        ZLog.w(TAG, "sessions-index subscribe retry failed: ${e.message}")
+                    }
+                    _listState.value = if (isRuntimeUnavailable(e)) {
+                        SessionsListState.RuntimeUnavailable
+                    } else {
+                        SessionsListState.Error
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 服务端「runtime 未运行」识别：code === ZCODE_AGENT_RUNTIME_UNAVAILABLE。
+     * 桌面（sessionsIndexStore.ts:63、windowHostSessionsIndexObserver.ts:33）按 code 判，
+     * 不按 message 匹配——message 是英文展示串且会变，code 是协议约定。
+     * 老桌面不回 code 时回退到 message 前缀匹配。
+     */
+    private fun isRuntimeUnavailable(e: Exception): Boolean {
+        val code = (e as? PromiseErrorException)?.code
+        if (code != null) return code == V4.RUNTIME_UNAVAILABLE_CODE
+        return e.message?.contains("runtime is not running", ignoreCase = true) == true
     }
 
     /**
@@ -187,6 +330,11 @@ class SessionsRepository(
     }
 
     private fun publish() {
+        // 首帧到达才算列表真的可用（ACK 成功但零帧是另一类故障，不能提前撤骨架屏）。
+        if (!hasDeliveredSnapshot) {
+            hasDeliveredSnapshot = true
+            _listState.value = SessionsListState.Ready
+        }
         republish()
     }
 

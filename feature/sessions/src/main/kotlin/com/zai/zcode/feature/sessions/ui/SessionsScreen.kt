@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Settings
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,6 +54,7 @@ import com.zai.zcode.feature.sessions.SessionsOrdering
 import com.zai.zcode.feature.sessions.SessionsRepository
 import com.zai.zcode.feature.sessions.SessionsViewModel
 import com.zai.zcode.feature.sessions.SessionFilter
+import com.zai.zcode.feature.sessions.SessionsListState
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -147,27 +150,27 @@ fun SessionsScreen(
             )
         }
 
-        if (sessions.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
-                    EmptyState(
-                        title = "暂无任务",
-                        description = "创建一个新会话开始",
-                        action = {
-                            TextButton(onClick = { viewModel.createSession(onOpenSession) }) {
-                                Text(if (creating) "创建中…" else "新会话")
-                            }
-                        },
-                    )
-                } else {
-                    EmptyState(title = "等待连接…", description = "连接到电脑后这里会显示任务")
-                }
-            }
+        // 修复依据（真机 v0.2.17「看不到工作区下已有的会话」）：列表是否空不再单独决定渲染。
+        // EmptyState("暂无任务") 把三种完全不同的事实混成一张脸——runtime 没起来在等、
+        // 订阅失败、真的没会话。先看加载态，再看列表内容。
+        val listState by viewModel.listState.collectAsState()
+        if (!listStateLoaded(listState, sessions)) {
+            SessionListPlaceholder(
+                listState = listState,
+                connected = connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready,
+                onRetry = viewModel::retrySubscribe,
+                onCreate = { viewModel.createSession(onOpenSession) },
+                creating = creating,
+            )
         } else {
             val nowEpochDay = LocalDate.now().toEpochDay()
             val sections = SessionsOrdering.groupByRecency(sessions, { it }, nowEpochDay)
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 修复依据（spec §5.2 离线/不可用态）：runtime 不在时列表保留但降饱和，
+                    // 而不是清空。用户在手机上看的是"上次见到的任务"，清空等于骗他任务没了。
+                    .then(if (listState == SessionsListState.RuntimeUnavailable) Modifier.staleList() else Modifier),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = ZcodeSpacing.screenPadding,
                     vertical = ZcodeSpacing.md,
@@ -200,6 +203,115 @@ fun SessionsScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 列表区域什么时候渲染内容行：[SessionsListState] 优先，空列表只是其中一种结果。
+ *
+ * Ready 一定渲染（空则 EmptyState 引导新建）；RuntimeUnavailable / Error 在还留有旧
+ * 快照时照样渲染列表行——旧数据比一张错误页有用，用户在屏幕上能继续看到昨天的任务。
+ */
+private fun listStateLoaded(state: SessionsListState, sessions: List<SessionsRepository.SessionItem>): Boolean =
+    state == SessionsListState.Ready || (sessions.isNotEmpty() && state != SessionsListState.Loading)
+
+/**
+ * 陈旧列表降饱和（docs/ui-design.md §5.2 离线态）。
+ * 只降 alpha 不改布局，既是"这份数据可能过期"的信号，也不把内容推走重排。
+ * alpha() 是非组合 API，可在纯函数里构造 Modifier 常量。
+ */
+private fun Modifier.staleList(): Modifier = this.alpha(0.55f)
+
+/**
+ * 列表占位：Loading 给骨架卡，RuntimeUnavailable / Error 给可读说明 + 重试。
+ *
+ * 修复依据（真机 v0.2.17）：此前 runtime 未启动与"真的没会话"共用一张「暂无任务」卡，
+ * 用户在手机上看到的是"历史会话全没了"，实际是"电脑端这个工作区还没起 runtime"——
+ * 文案必须说出可执行的下一步（在电脑端打开该工作区 / 点重试），否则用户只能卸载。
+ */
+@Composable
+private fun SessionListPlaceholder(
+    listState: SessionsListState,
+    connected: Boolean,
+    onRetry: () -> Unit,
+    onCreate: () -> Unit,
+    creating: Boolean,
+) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        when {
+            // 连接本身还没通：这时 Loading 说的是"正在连电脑"，不是"正在读列表"。
+            !connected -> EmptyState(
+                title = "等待连接…",
+                description = "连接到电脑后这里会显示任务",
+            )
+
+            listState == SessionsListState.Loading -> SessionSkeleton()
+
+            listState == SessionsListState.RuntimeUnavailable -> EmptyState(
+                title = "这个工作区还没有运行",
+                description = "在电脑上打开 ZCode 并进入该工作区，列表会自动出现",
+                action = {
+                    TextButton(onClick = onRetry) { Text("立即重试") }
+                },
+            )
+
+            listState == SessionsListState.Error -> EmptyState(
+                title = "读取任务列表失败",
+                description = "连接正常但列表没读出来，重试通常可恢复",
+                action = {
+                    TextButton(onClick = onRetry) { Text("重试") }
+                },
+            )
+
+            else -> EmptyState(
+                title = "暂无任务",
+                description = "创建一个新会话开始",
+                action = {
+                    TextButton(onClick = onCreate) {
+                        Text(if (creating) "创建中…" else "新会话")
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 骨架屏：三张占位卡而不是一行「加载中…」。
+ * 修复依据（spec §5.2 骨架屏）：列表形状在加载时就定下来，内容到达时不发生高度跳变，
+ * 用户不会看到"文字突然插进来"的抖动。
+ */
+@Composable
+private fun SessionSkeleton() {
+    val zc = LocalZcodeColors.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+    ) {
+        repeat(3) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(zc.card, ZcodeShape.card)
+                    .padding(ZcodeSpacing.md),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.5f)
+                        .height(12.dp)
+                        .background(zc.input, RoundedCornerShape(6.dp)),
+                )
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.82f)
+                        .height(10.dp)
+                        .background(zc.input, RoundedCornerShape(5.dp)),
+                )
             }
         }
     }

@@ -46,19 +46,102 @@ class ChatRepository(
      */
     private val workspaceIdentity: String? = null,
 ) {
-    /** UI 行模型（从 protocol JsonObject 行裁剪出的最小投影）。 */
-    data class ChatRow(
-        val rowId: Long,
-        val kind: String?,
-        val text: String?,
-        val state: String?,
-        val toolName: String?,
-        val inputText: String?,
-        val streaming: Boolean,
-    )
+    /**
+     * 行类型集合与服务端 rows.ts 的 discriminatedUnion 一一对应（9 种）。
+     * UI 侧用 when(row) 穷尽分支，编译期保证每种行都有渲染路径；
+     * 服务端加新行类型时旧版 App 降级为 Unknown 展示，不静默丢行。
+     */
+    sealed interface ChatRowKind {
+        val rowId: Long
+        val streaming: Boolean
+
+        data class UserInput(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val text: String,
+            val inputOrigin: String?,
+        ) : ChatRowKind
+
+        data class AssistantText(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val text: String,
+            val model: String?,
+        ) : ChatRowKind
+
+        data class Reasoning(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val text: String,
+        ) : ChatRowKind
+
+        data class ToolCall(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val toolName: String,
+            val inputText: String?,
+            val status: String?,
+        ) : ChatRowKind
+
+        /**
+         * turnHeader 骨架：一轮的边界标签 + 权威工时 + 每轮文件改动摘要。
+         * fileChanges 齐全才算 diff 卡片可用，缺任一计数就不谎报（spec §5.3）。
+         */
+        data class TurnHeader(
+            override val rowId: Long,
+            val state: String?,
+            val activeMs: Long?,
+            val fileChanges: FileChanges? = null,
+        ) : ChatRowKind {
+            /** turnHeader 是整个轮的容器标签，不做行内流式指示。 */
+            override val streaming: Boolean get() = false
+
+            data class FileChanges(val additions: Int, val deletions: Int, val files: Int)
+        }
+
+        data class Subagent(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val subagentType: String?,
+            val summaryText: String?,
+            val childSessionId: String?,
+        ) : ChatRowKind
+
+        data class Artifact(
+            override val rowId: Long,
+            val displayName: String?,
+            val artifactType: String?,
+            val sizeBytes: Long?,
+        ) : ChatRowKind {
+            override val streaming: Boolean get() = false
+        }
+
+        data class HookInvocation(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val hookEventName: String?,
+            val hookCount: Int?,
+        ) : ChatRowKind
+
+        data class TimelineMarker(
+            override val rowId: Long,
+            val markerType: String?,
+            val lane: String?,
+            val text: String?,
+        ) : ChatRowKind {
+            override val streaming: Boolean get() = false
+        }
+
+        /** 未知 kind：不丢行，原样展示服务端下发的内容（label 为降级文案）。 */
+        data class Unknown(
+            override val rowId: Long,
+            override val streaming: Boolean,
+            val label: String,
+        ) : ChatRowKind
+    }
 
     data class ChatUi(
-        val rows: List<ChatRow> = emptyList(),
+        val rows: List<ChatRowKind> = emptyList(),
         val revision: Long? = null,
         val phase: String? = null,
         /** phase 是封闭枚举（sessionPhaseSchema：draft、prewarming、running、
@@ -203,18 +286,49 @@ class ChatRepository(
         )
     }
 
-    private fun toChatRow(raw: kotlinx.serialization.json.JsonObject): ChatRow {
+    /**
+     * 行投影：服务端 RowView → 封闭的行模型。
+     *
+     * streaming 判据：state 字段非终态（对齐 TS 侧 streaming row 语义）。
+     * 未知 kind 降级为 [ChatRowKind.Unknown] 而非丢弃 —— 服务端加行类型时，
+     * 旧版 App 应当展示「看不懂的一行」而不是悄悄把回复吃掉。
+     */
+    private fun toChatRow(raw: kotlinx.serialization.json.JsonObject): ChatRowKind {
         val v = RowView(raw)
-        return ChatRow(
-            rowId = v.rowId ?: -1,
-            kind = v.kind,
-            text = v.text,
-            state = v.state,
-            toolName = v.toolName,
-            inputText = v.inputText,
-            // streaming 判据：state 字段非终态（对齐 TS 侧 streaming row 语义）
-            streaming = v.state?.let { it != "done" && it != "error" && it != "aborted" } == true,
-        )
+        val streaming = v.state?.let { it != "done" && it != "error" && it != "aborted" } == true
+        val rowId = v.rowId ?: -1
+        return when (v.kind) {
+            "userInput" -> ChatRowKind.UserInput(rowId, streaming, v.text.orEmpty(), v.inputOrigin)
+            "assistantText" -> ChatRowKind.AssistantText(rowId, streaming, v.text.orEmpty(), v.model)
+            "reasoning" -> ChatRowKind.Reasoning(rowId, streaming, v.text.orEmpty())
+            "toolCall" -> ChatRowKind.ToolCall(rowId, streaming, v.toolName ?: "tool", v.inputText, v.status)
+            "turnHeader" -> ChatRowKind.TurnHeader(rowId, v.state, v.activeMs, fileChangesOf(v))
+            "subagent" -> ChatRowKind.Subagent(rowId, streaming, v.subagentType, v.summaryText, v.childSessionId)
+            "artifact" -> ChatRowKind.Artifact(rowId, v.displayName, v.artifactType, v.sizeBytes)
+            "hookInvocation" -> ChatRowKind.HookInvocation(rowId, streaming, v.hookEventName, v.hookCount)
+            "timelineMarker" -> ChatRowKind.TimelineMarker(rowId, v.markerType, v.lane, markerText(v))
+            else -> ChatRowKind.Unknown(rowId, streaming, v.kind ?: "unknown")
+        }
+    }
+
+    /** 三个计数必须齐全才构成摘要卡，缺任一都不谎报「0 个文件已更改」。 */
+    private fun fileChangesOf(v: RowView): ChatRowKind.TurnHeader.FileChanges? {
+        val additions = v.fileChangeAdditions ?: return null
+        val deletions = v.fileChangeDeletions ?: return null
+        val files = v.fileChangeFiles ?: return null
+        return ChatRowKind.TurnHeader.FileChanges(additions, deletions, files)
+    }
+
+    /**
+     * marker 文案：payload 是 discriminated union，按 type 挑字段。
+     * 取不到就用 type 本身——marker 只是时间线分隔，不需要为了它引入整套 union 模型。
+     */
+    private fun markerText(v: RowView): String? = when (v.markerType) {
+        "goalSet" -> v.markerObjective
+        "checkpointRestored" -> v.markerDetail ?: "已恢复检查点"
+        "forkCreated" -> v.markerDetail ?: "已创建分支会话"
+        "retryNotice" -> v.markerDetail ?: "重试中"
+        else -> v.markerObjective ?: v.markerDetail ?: v.markerOutcome ?: v.markerToModel ?: v.markerType
     }
 
     /** 发送文本（sendText 命令）。 */

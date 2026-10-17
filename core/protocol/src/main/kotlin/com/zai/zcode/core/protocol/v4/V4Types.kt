@@ -50,6 +50,13 @@ object V4 {
      */
     const val METHOD_SESSIONS_INDEX_RESYNC = "resyncSessionsIndexV4"
 
+    /**
+     * 服务端「runtime 未运行」错误码（zcodeAgent.ts:210 / zcodeAgentService.ts:939）。
+     * existing-only 订阅在没有活跃 CLI 时必抛；桌面 UI 侧按此 code 进入 dormant 等待，
+     * 不把它当普通失败（sessionsIndexStore.ts:63）。
+     */
+    const val RUNTIME_UNAVAILABLE_CODE = "ZCODE_AGENT_RUNTIME_UNAVAILABLE"
+
     // V4 下行事件（on* 方法 → channel.listen(propKey, workspaceTarget)）。
     const val EVENT_CONVERSATION_FRAME = "onDynamicConversationFrame"
     // 修复依据（P0-4）：sessions-index 有独立的动态事件，漏挂会收不到帧。
@@ -422,12 +429,46 @@ class RowView(val raw: JsonObject) {
     val toolName: String? get() = raw["toolName"].asStringOrNull()
     val toolCallId: String? get() = raw["toolCallId"].asStringOrNull()
     val inputText: String? get() = raw["inputText"].asStringOrNull()
+    /** toolCall 用：inputStreaming / pendingApproval / running / success / error / cancelled。 */
+    val status: String? get() = raw["status"].asStringOrNull()
 
     // subagent
     val childSessionId: String? get() = raw["childSessionId"].asStringOrNull()
+    val subagentType: String? get() = raw["subagentType"].asStringOrNull()
+    val summaryText: String? get() = raw["summaryText"].asStringOrNull()
 
     // userInput
     val inputOrigin: String? get() = raw["inputOrigin"].asStringOrNull()
+
+    // turnHeader：每轮文件改动摘要（rows.ts fileChanges）。只有 fileChanges 存在才有意义。
+    val fileChangeAdditions: Int? get() = raw["fileChanges"].asObjectOrNull()?.get("additions").asIntOrNull()
+    val fileChangeDeletions: Int? get() = raw["fileChanges"].asObjectOrNull()?.get("deletions").asIntOrNull()
+    val fileChangeFiles: Int? get() = raw["fileChanges"].asObjectOrNull()?.get("files").asIntOrNull()
+
+    // artifact
+    val displayName: String? get() = raw["displayName"].asStringOrNull()
+    val artifactType: String? get() = raw["artifactType"].asStringOrNull()
+    val sizeBytes: Long? get() = raw["sizeBytes"].asLongOrNull()
+
+    // hookInvocation
+    val hookEventName: String? get() = raw["hookEventName"].asStringOrNull()
+    val hookCount: Int? get() = raw["hookCount"].asIntOrNull()
+
+    /**
+     * timelineMarker 的显示骨架：marker 是一组 discriminated union，`type` 之后各类型字段不同。
+     * UI 只需 type + 少量文案字段；拿不到就按 type 渲染标题，不让 marker 决定行的生死。
+     */
+    val markerType: String? get() = raw["marker"].asObjectOrNull()?.get("type").asStringOrNull()
+    val markerObjective: String? get() = raw["marker"].asObjectOrNull()?.get("objective").asStringOrNull()
+    val markerOutcome: String? get() = raw["marker"].asObjectOrNull()?.get("outcome").asStringOrNull()
+    val markerToModel: String? get() = raw["marker"].asObjectOrNull()?.get("toModel").asStringOrNull()
+    val markerDetail: String? get() = raw["marker"].asObjectOrNull()?.get("detail").asStringOrNull()
+    val markerIteration: Int? get() = raw["marker"].asObjectOrNull()?.get("iteration").asIntOrNull()
+    /** marker 泳道：assistantWork / turnTailBoundary / lightBoundary（落位由服务端裁决）。 */
+    val lane: String? get() = raw["lane"].asStringOrNull()
+
+    /** turnHeader 的权威工时（排除等待），用于「已工作 12s」折叠卡。 */
+    val activeMs: Long? get() = raw["activeMs"].asLongOrNull()
 }
 
 /**

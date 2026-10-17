@@ -722,15 +722,17 @@ class ZcodeConnection(
      * 对齐桌面 V4 路径（SessionPane.tsx:3423 / useDraftSessionPrewarm.ts:89）：
      * sendConversationCommandV4 + envelope{type:"createSession", sessionId:null,
      * payload:{workspaceId:<workspaceKey>, firstInput?}}；ack.result.sessionId 是新会话。
-     * workspaceKey 语义 = 桌面 workspaceIdentity?.trim() || workspacePath（本地工作区
-     * 两者同值，见 bootstrap 解析）；sendCommand 侧补 workspacePath/identity 路由参数。
+     *
+     * 修复依据（真机 v0.2.17「创建会话还是不行」）：原先返回 `String?`，五条失败路径全部
+     * 塌成一个 null，UI 只能说"请确认电脑端在线后重试"。用户报"还是不行"时这句话给不出
+     * 任何可行动信息——到底没连上、被服务端拒了、还是 ACK 里没有 sessionId，完全不同。
+     * 改成 [CreateSessionResult]，把服务端 reasonCode/message 原样带上。
      *
      * @param firstInput 首条输入文本；null 创建 draft 空会话（phase=draft）
-     * @return 新会话 id；协议未就绪/被拒/异常返回 null（UI 提示失败即可）
      */
-    suspend fun createSession(firstInput: String? = null): String? {
-        val p = _protocol.value ?: return null
-        val ws = _currentWorkspace.value ?: return null
+    suspend fun createSession(firstInput: String? = null): CreateSessionResult {
+        val p = _protocol.value ?: return CreateSessionResult.Failure(CreateSessionReason.NotConnected)
+        val ws = _currentWorkspace.value ?: return CreateSessionResult.Failure(CreateSessionReason.NoWorkspace)
         // 修复依据(真机 v0.2.14"创建会话失败/新会话不出现在列表"):workspaceId 必须是
         // workspaceKey(identity.trim()||path),不是裸 workspacePath。对齐 zemote
         // main_shell.dart:18 workspaceKeyOf 与桌面 useDraftSessionPrewarm.ts:76。
@@ -756,7 +758,9 @@ class ZcodeConnection(
             val ack = p.sendCommand(ws.path, envelope, wsIdentity, timeoutMs = CREATE_SESSION_TIMEOUT_MS)
             if (ack.status != "accepted") {
                 ZLog.w(TAG, "createSession rejected: ${ack.status} ${ack.reasonCode ?: ""} ${ack.message ?: ""}")
-                return@runCatching null
+                return@runCatching CreateSessionResult.Failure(
+                    CreateSessionReason.Rejected(ack.status, ack.reasonCode, ack.message),
+                )
             }
             val result = ack.result
             // 修复依据（真机 v0.2.15「已 accepted 却提示创建失败」）：zemote
@@ -770,13 +774,41 @@ class ZcodeConnection(
                 !sessionId.isString || sessionId.content.isBlank()
             ) {
                 ZLog.w(TAG, "createSession ack missing result sessionId")
-                return@runCatching null
+                return@runCatching CreateSessionResult.Failure(CreateSessionReason.NoSessionId)
             }
-            sessionId.content
+            CreateSessionResult.Success(sessionId.content)
         }.getOrElse {
+            // 修复依据（真机 v0.2.17）：异常里可能带服务端 error code（runtime 冷启动超时
+            // 与真正被拒是两种处置，前者再等等就好），把 code 与 message 一起回传，
+            // UI 才能说出"该等还是该报错"。
             ZLog.w(TAG, "createSession failed: ${it.message}")
-            null
+            val code = (it as? com.zai.zcode.core.protocol.rpc.PromiseErrorException)?.code
+            CreateSessionResult.Failure(CreateSessionReason.Error(code, it.message))
         }
+    }
+
+    /** [createSession] 的结果：成功给会话 id，失败给**具体**原因。 */
+    sealed interface CreateSessionResult {
+        data class Success(val sessionId: String) : CreateSessionResult
+        data class Failure(val reason: CreateSessionReason) : CreateSessionResult
+    }
+
+    /** 创建失败的可诊断原因（UI 文案按此分流，不再一律"确认电脑端在线"）。 */
+    sealed interface CreateSessionReason {
+        /** 协议实例还没就绪——连接断了或还在握手。 */
+        data object NotConnected : CreateSessionReason
+
+        /** 还没选定工作区（bootstrap 未返回 / 用户未选）。 */
+        data object NoWorkspace : CreateSessionReason
+
+        /** 服务端拒绝：带上 status/reasonCode/message原样透出。 */
+        data class Rejected(val status: String?, val reasonCode: String?, val message: String?) : CreateSessionReason
+
+        /** ACK accepted 但没有 sessionId——服务端/CLI 侧没建出来。 */
+        data object NoSessionId : CreateSessionReason
+
+        /** 传输层异常（超时、runtime 不可用等），保留服务端 error code 便于定位。 */
+        data class Error(val code: String?, val message: String?) : CreateSessionReason
     }
 }
 

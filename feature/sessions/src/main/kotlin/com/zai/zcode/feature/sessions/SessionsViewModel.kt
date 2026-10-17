@@ -51,6 +51,18 @@ class SessionsViewModel @Inject constructor(
     val connectionState: StateFlow<ZcodeConnection.State> =
         connection.state
 
+    /**
+     * 列表加载态：UI 用它区分「真没有会话」/「电脑端 runtime 没起来」/「加载中」。
+     * 修复依据（真机 v0.2.17）：三者此前都渲染成「暂无任务」，用户无法判断该等还是该重试。
+     */
+    val listState: StateFlow<SessionsListState> =
+        repository.listState.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionsListState.Loading)
+
+    /** 手动重试：用户在「电脑端未启动」提示上点重试时调用。 */
+    fun retrySubscribe() {
+        repository.retrySubscribe()
+    }
+
     /** 可选 workspace 列表（来自 serverInfo/bootstrap）。 */
     val workspaces: StateFlow<List<ServerInfo.Workspace>> =
         connection.serverInfo.map { it?.workspaces ?: emptyList() }
@@ -106,14 +118,52 @@ class SessionsViewModel @Inject constructor(
         creating = true
         createError = null
         viewModelScope.launch {
-            val id = connection.createSession(firstInput = null)
-            creating = false
-            if (id != null) {
-                onCreated(id)
-            } else {
-                createError = "创建会话失败，请确认电脑端在线后重试"
+            when (val result = connection.createSession(firstInput = null)) {
+                is ZcodeConnection.CreateSessionResult.Success -> {
+                    creating = false
+                    onCreated(result.sessionId)
+                }
+
+                is ZcodeConnection.CreateSessionResult.Failure -> {
+                    creating = false
+                    createError = createErrorMessage(result.reason)
+                }
             }
         }
+    }
+
+    /**
+     * 失败文案：把服务端给的真实原因说给用户听。
+     * 修复依据（真机 v0.2.17「创建会话还是不行」）：一句"请确认电脑端在线后重试"在用户
+     * 已经确认在线之后毫无价值。这里按 [ZcodeConnection.CreateSessionReason] 分流——
+     * runtime 不可用要等、被拒要报服务端的话、没 sessionId 是另一类故障，处置各不相同。
+     */
+    private fun createErrorMessage(reason: ZcodeConnection.CreateSessionReason): String = when (reason) {
+        ZcodeConnection.CreateSessionReason.NotConnected ->
+            "未连接到电脑，连接恢复后再试"
+
+        ZcodeConnection.CreateSessionReason.NoWorkspace ->
+            "还没有选定工作区，先在顶部选一个"
+
+        is ZcodeConnection.CreateSessionReason.Rejected -> buildString {
+            append("电脑端拒绝创建")
+            reason.reasonCode?.takeIf { it.isNotBlank() }?.let { append("（$it）") }
+            reason.message?.takeIf { it.isNotBlank() }?.let { append("：$it") }
+        }
+
+        ZcodeConnection.CreateSessionReason.NoSessionId ->
+            "电脑端没有返回新会话 id，请更新电脑端 ZCode 后重试"
+
+        is ZcodeConnection.CreateSessionReason.Error ->
+            if (reason.code == null && reason.message.isNullOrBlank()) {
+                "创建会话失败，请稍后重试"
+            } else {
+                buildString {
+                    append("创建会话失败")
+                    reason.code?.let { append("（$it）") }
+                    reason.message?.takeIf { it.isNotBlank() }?.let { append("：$it") }
+                }
+            }
     }
 
     fun dismissCreateError() {
