@@ -29,7 +29,7 @@ class ChannelClientTest {
             onMessage(
                 RpcMessage(
                     RpcProtocol.MSG_REGULAR, 0, 0,
-                    regularFrame(buildJsonArray { add(JsonPrimitive(RpcProtocol.INITIALIZE)) }, null),
+                    regularFrame(buildJsonArray { add(JsonPrimitive(RpcResponseType.INITIALIZE)) }, null),
                 ),
             )
         }
@@ -47,7 +47,7 @@ class ChannelClientTest {
             RpcMessage(
                 RpcProtocol.MSG_REGULAR, 0, 0,
                 regularFrame(
-                    buildJsonArray { add(JsonPrimitive(RpcProtocol.EVENT_FIRE)); add(JsonPrimitive(1)) },
+                    buildJsonArray { add(JsonPrimitive(RpcResponseType.EVENT_FIRE)); add(JsonPrimitive(1)) },
                     payload,
                 ),
             ),
@@ -71,7 +71,7 @@ class ChannelClientTest {
                 RpcProtocol.MSG_REGULAR, 0, 0,
                 regularFrame(
                     buildJsonArray {
-                        add(JsonPrimitive(RpcProtocol.EVENT_FIRE)); add(JsonPrimitive(1)); add(JsonPrimitive("onX"))
+                        add(JsonPrimitive(RpcResponseType.EVENT_FIRE)); add(JsonPrimitive(1)); add(JsonPrimitive("onX"))
                     },
                     buildJsonArray { add(JsonPrimitive("v")) },
                 ),
@@ -89,7 +89,7 @@ class ChannelClientTest {
             RpcMessage(
                 RpcProtocol.MSG_REGULAR, 0, 0,
                 regularFrame(
-                    buildJsonArray { add(JsonPrimitive(RpcProtocol.EVENT_FIRE)); add(JsonPrimitive(999)) },
+                    buildJsonArray { add(JsonPrimitive(RpcResponseType.EVENT_FIRE)); add(JsonPrimitive(999)) },
                     null,
                 ),
             ),
@@ -107,7 +107,7 @@ class ChannelClientTest {
 
         val (header, body) = RpcSerialization.deserializeTwoSegments(sent!!)
         val h = header as kotlinx.serialization.json.JsonArray
-        assertEquals(RpcProtocol.EVENT_LISTEN, h[0].toString().toInt())
+        assertEquals(RpcRequestType.EVENT_LISTEN, h[0].toString().toInt())
         assertNotNull(body)
         // arg 原样序列化:body 段即 workspaceTarget 本身,不是 [workspaceTarget]
         assertEquals(arg, body)
