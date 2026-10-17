@@ -51,8 +51,10 @@ fun SessionsScreen(
     val connState by viewModel.connectionState.collectAsState()
     // 修复依据(用户报"应该支持在 Android 上进行会话创建"):空态文案原来写死"去电脑端
     // 创建",顶部也一直没有创建入口。此处接 ViewModel.createSession,创建成功直接进会话。
-    val creating by viewModel.creating.collectAsState()
-    val createError by viewModel.createError.collectAsState()
+    // 修复依据(CI run 39027700956):creating/createError 是 mutableStateOf 委托属性,
+    // 不是 Flow,不能 collectAsState——直接读即可获得 Compose 快照订阅。
+    val creating = viewModel.creating
+    val createError = viewModel.createError
 
     Column(Modifier.fillMaxSize()) {
         Row(
