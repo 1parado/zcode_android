@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -127,12 +130,17 @@ fun EmptyState(
     }
 }
 
-/** 设备标签（占位）：M1 期 Home 顶栏当前设备名。 */
+/** 设备标签：Home 顶栏当前 workspace 名；提供 onClick 时可点开 workspace 选择器。 */
 @Composable
-fun DeviceChip(deviceName: String, modifier: Modifier = Modifier) {
+fun DeviceChip(
+    deviceName: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
     val zc = LocalZcodeColors.current
     Row(
         modifier
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .background(zc.card, ZcodeShape.inner)
             .padding(horizontal = ZcodeSpacing.md, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -140,6 +148,15 @@ fun DeviceChip(deviceName: String, modifier: Modifier = Modifier) {
         LiveDot(ZcodeStatus.Running)
         Spacer(Modifier.width(6.dp))
         Text(deviceName, style = ZcodeType.uiSm, color = zc.textSecondary)
+        if (onClick != null) {
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                Icons.Rounded.ExpandMore,
+                contentDescription = "切换工作区",
+                modifier = Modifier.size(14.dp),
+                tint = zc.textTertiary,
+            )
+        }
     }
 }
 

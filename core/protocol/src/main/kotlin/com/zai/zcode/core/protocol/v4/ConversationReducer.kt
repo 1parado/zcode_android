@@ -32,21 +32,28 @@ class ConversationReducer {
     /** 施加一个已重组的 logical 帧。返回 true 表示状态有变化。 */
     fun apply(frame: TopicFrame): Boolean {
         if (!frame.topic.startsWith("conversation/")) return false
+        val kind = frame.payload["kind"].asStringOrNull()
+        // 修复依据(真机 v0.2.11"新建会话后 加载会话… 永挂"):原实现无条件
+        // `frame.toSeq <= seq` 即丢弃,而 seq 初值 0——全新空会话的 initial snapshot
+        // toSeq=0 被静默丢弃,rows 永远为空。对齐 TS conversationProjectionStore:
+        // snapshot 是整表替换语义,永远施加(重复同帧幂等),deltas 才做旧帧判定。
+        if (kind == "snapshot") {
+            val snapshot = frame.snapshotObject() ?: return false
+            rowsById.clear()
+            for (row in snapshot.rowsOrEmpty()) {
+                val id = RowView(row).rowId ?: continue
+                rowsById[id] = row
+            }
+            // snapshot 是整表替换语义,state/logEpoch 应一并替换
+            // （缺 state 键 = 无 state，不应保留旧值）。
+            state = snapshot["state"]?.asObjectOrNull()
+            logEpoch = snapshot["logEpoch"]?.asStringOrNull()
+            if (frame.toSeq > seq) seq = frame.toSeq
+            return true
+        }
         if (frame.toSeq <= seq) return false // 旧帧（乱序/重复）丢弃
 
-        when (frame.payload["kind"].asStringOrNull()) { // 修复依据（P3）：改 asStringOrNull，见评审 2026-10-17
-            "snapshot" -> {
-                val snapshot = frame.snapshotObject() ?: return false
-                rowsById.clear()
-                for (row in snapshot.rowsOrEmpty()) {
-                    val id = RowView(row).rowId ?: continue
-                    rowsById[id] = row
-                }
-                // 修复依据（P2-12）：snapshot 是整表替换语义，state/logEpoch 应一并替换
-                // （缺 state 键 = 无 state，不应保留旧值）。
-                state = snapshot["state"]?.asObjectOrNull()
-                logEpoch = snapshot["logEpoch"]?.asStringOrNull()
-            }
+        when (kind) {
             "deltas" -> {
                 for (deltaEl in frame.deltas() ?: return false) {
                     val delta = deltaEl as? JsonObject ?: continue

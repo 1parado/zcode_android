@@ -5,6 +5,7 @@ import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -184,6 +185,26 @@ class ConversationReducerTest {
         // 修复原因：Kotlin 扩展函数必须用接收者语法调用（x.asStringOrNull()），
         // 顶层调用语法 asStringOrNull(x) 会被当作普通函数解析而报候选不适用。
         assertEquals("hello", state.rows[1]["text"].asStringOrNull())
+    }
+
+    @Test
+    fun `空会话 initial snapshot toSeq=0 必须施加`() {
+        // 修复依据(真机 v0.2.11"新建会话后 加载会话… 永挂"):全新空会话 initial
+        // snapshot toSeq=0,旧实现 `toSeq <= seq`(seq 初值 0)把它静默丢弃,rows 永远为空。
+        val reducer = ConversationReducer()
+        val topic = "conversation/s-new"
+        val snap = TopicFrame.fromJson(snapshotFrame(topic, 0, buildJsonObject {
+            put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement("[]"))
+            put("state", buildJsonObject { put("phase", "draft") })
+        }))!!
+        assertTrue(reducer.apply(snap))
+        val st = reducer.snapshot("s-new")
+        assertEquals(0, st.rows.size)
+        assertEquals("draft", st.state?.get("phase")?.jsonPrimitive?.content)
+
+        // 后续 delta 以 fromSeq=0 起步仍可衔接
+        assertTrue(reducer.apply(deltaFrame(topic, 0, 1, """[{"op":"row.appended","row":{"rowId":1,"kind":"userInput","text":"hi"}}]""")))
+        assertEquals(1, reducer.snapshot("s-new").rows.size)
     }
 
     @Test

@@ -5,12 +5,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.zai.zcode.core.network.ServerInfo
 import com.zai.zcode.core.network.ZcodeConnection
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -48,6 +50,20 @@ class SessionsViewModel @Inject constructor(
 
     val connectionState: StateFlow<ZcodeConnection.State> =
         connection.state
+
+    /** 可选 workspace 列表（来自 serverInfo/bootstrap）。 */
+    val workspaces: StateFlow<List<ServerInfo.Workspace>> =
+        connection.serverInfo.map { it?.workspaces ?: emptyList() }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 当前选中 workspace（Home 页 chip 显示 + 选择器高亮）。 */
+    val currentWorkspace: StateFlow<ServerInfo.Workspace?> =
+        connection.currentWorkspace
+
+    /** 用户点选 workspace：交给连接层切换（relay 会重开 bridge）。 */
+    fun selectWorkspace(ws: ServerInfo.Workspace) {
+        connection.selectWorkspace(ws)
+    }
 
     init {
         repository.start()

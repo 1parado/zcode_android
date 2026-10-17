@@ -626,6 +626,45 @@ class ZcodeConnection(
         ws = null
     }
 
+    /**
+     * 切换当前 workspace（用户报障 v0.2.11：Home 页只有一个写死的「这台电脑」，
+     * 无法查看其他 workspace 下的会话）。relay 模式对目标 workspace 重新走
+     * workspace-bridge-open（桌面 respondToWorkspaceBridgeOpen 原生支持按 key 开桥），
+     * 局域网模式只更新 _currentWorkspace（单 server 多 workspace 场景，V4 事件
+     * fan-out 参数由 attachFrameListener(workspacePath) 决定）。
+     */
+    fun selectWorkspace(workspace: ServerInfo.Workspace) {
+        scope.launch { lifecycleMutex.withLock {
+            val info = _serverInfo.value ?: return@withLock
+            if (_currentWorkspace.value?.path == workspace.path) return@withLock
+            _currentWorkspace.value = workspace
+            _protocol.value = null
+            if (desiredRelay != null) {
+                // relay：重开 bridge（openBridge 内部会作废旧 bridge 并发布新 protocol）
+                try {
+                    openBridge(workspace)
+                } catch (e: Exception) {
+                    ZLog.w(TAG, "switch workspace bridge failed: ${e.message}")
+                    // 失败时尝试恢复到新选 workspace（bridge-degraded 同路径）
+                    scope.launch { recoverBridge() }
+                }
+            } else {
+                _protocol.value?.attachFrameListener(workspace.path)
+                // protocol 实例未变，Repository 需要显式触发：重发 protocol 值让订阅方重跑
+                _protocol.value = _protocol.value
+            }
+            _state.value = State.Ready(info)
+            relayClient?.sendPayload(buildJsonObject {
+                put("zcode_type", "mobile-view-state-update")
+                put("viewState", buildJsonObject {
+                    put("activeWorkspaceKey", workspace.path)
+                    put("updatedAt", System.currentTimeMillis())
+                })
+            })
+            ZLog.i(TAG, "workspace selected: ${workspace.path}")
+        } }
+    }
+
     /** 会话/工作区选择变化时调用：workspaceTarget 决定事件 fan-out 范围。 */
     fun attachFrameListener(workspacePath: String, workspaceIdentity: String? = null) {
         _protocol.value?.attachFrameListener(workspacePath, workspaceIdentity)

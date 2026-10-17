@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -26,9 +27,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.core.design.ZcodeShape
@@ -59,6 +67,9 @@ fun SessionsScreen(
 ) {
     val sessions by viewModel.sessions.collectAsState()
     val connState by viewModel.connectionState.collectAsState()
+    val workspaces by viewModel.workspaces.collectAsState()
+    val currentWorkspace by viewModel.currentWorkspace.collectAsState()
+    var showWorkspacePicker by remember { mutableStateOf(false) }
     val filter = viewModel.filter
     val creating = viewModel.creating
     val createError = viewModel.createError
@@ -85,10 +96,27 @@ fun SessionsScreen(
                     },
                 )
             }
-            DeviceChip("这台电脑")
+            DeviceChip(
+                deviceName = currentWorkspace?.label
+                    ?: currentWorkspace?.path?.substringAfterLast('\\')?.substringAfterLast('/')
+                    ?: "这台电脑",
+                onClick = { showWorkspacePicker = true },
+            )
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = zc.textSecondary)
             }
+        }
+
+        if (showWorkspacePicker) {
+            WorkspacePickerSheet(
+                workspaces = workspaces,
+                currentPath = currentWorkspace?.path,
+                onSelect = { ws ->
+                    showWorkspacePicker = false
+                    viewModel.selectWorkspace(ws)
+                },
+                onDismiss = { showWorkspacePicker = false },
+            )
         }
 
         // 筛选行：全部 / 需要你 / 运行中
@@ -169,6 +197,84 @@ fun SessionsScreen(
                                 viewModel.markSeen(item.sessionId)
                                 onOpenSession(item.sessionId)
                             },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Workspace 选择器（用户报障 v0.2.11：Home 页只有写死的「这台电脑」，无法查看
+ * 其他 workspace 下的真实会话）。ModalBottomSheet 列出 bootstrap/serverInfo 的
+ * 全部 workspace，点选交给 [SessionsViewModel.selectWorkspace]（relay 模式重开 bridge）。
+ */
+@Composable
+private fun WorkspacePickerSheet(
+    workspaces: List<com.zai.zcode.core.network.ServerInfo.Workspace>,
+    currentPath: String?,
+    onSelect: (com.zai.zcode.core.network.ServerInfo.Workspace) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val zc = LocalZcodeColors.current
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = zc.panel,
+        shape = ZcodeShape.sheet,
+    ) {
+        Text(
+            "选择工作区",
+            style = ZcodeType.uiLg,
+            color = zc.text,
+            modifier = Modifier.padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = ZcodeSpacing.xxl),
+        ) {
+            if (workspaces.isEmpty()) {
+                item {
+                    Text(
+                        "暂无可用工作区",
+                        style = ZcodeType.uiSm,
+                        color = zc.textTertiary,
+                        modifier = Modifier.padding(ZcodeSpacing.screenPadding),
+                    )
+                }
+            }
+            itemsIndexed(workspaces, key = { _, ws -> ws.path }) { _, ws ->
+                val selected = ws.path == currentPath
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(ws) }
+                        .background(if (selected) zc.card else Color.Transparent)
+                        .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            ws.label ?: ws.path.substringAfterLast('\\').substringAfterLast('/'),
+                            style = ZcodeType.uiMd,
+                            color = if (selected) zc.text else zc.textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            ws.path,
+                            style = ZcodeType.uiXs,
+                            color = zc.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (selected) {
+                        Icon(
+                            Icons.Rounded.Check,
+                            contentDescription = "当前工作区",
+                            tint = zc.running,
+                            modifier = Modifier.size(18.dp),
                         )
                     }
                 }
