@@ -132,7 +132,8 @@ private fun MdCode(block: MdBlock.CodeBlock, modifier: Modifier) {
 @Composable
 private fun highlightLine(line: String, language: String?): AnnotatedString = remember(line, language) {
     buildAnnotatedString {
-        MdCodeHighlighter.tokenize(line, language).forEach { tok ->
+        // CI(run 39016930334)报 language 可空与 tokenize(String) 不匹配:空语言按 PLAIN 处理
+        MdCodeHighlighter.tokenize(line, language ?: "").forEach { tok ->
             val color = when (tok.tok) {
                 MdCodeHighlighter.Tok.KEYWORD -> CODE_KEYWORD
                 MdCodeHighlighter.Tok.STRING -> CODE_STRING

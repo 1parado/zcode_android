@@ -49,7 +49,8 @@ internal fun MdMathBlockView(block: MdBlock.MathBlock, modifier: Modifier = Modi
 
 private fun buildDrawable(latex: String): JLatexMathDrawable =
     JLatexMathDrawable.builder(latex)
-        .textSize(16)
+        // CI(run 39016930334)报 textSize 形参是 Float:JLatexMathDrawable builder 用 f 后缀
+        .textSize(16f)
         .padding(8)
         .background(0)
         .align(JLatexMathDrawable.ALIGN_CENTER)
