@@ -40,6 +40,8 @@ class ChannelClientTest {
         client.listenEvent("zcode-agent", "onConversationFrameV4")
         val fired = kotlinx.coroutines.CompletableDeferred<ChannelClient.EventFireData>()
         val job = launch { client.events.first { it.channelName == "zcode-agent" }.let { fired.complete(it) } }
+        // yield 让收集协程先挂起订阅,否则 replay=0 的 tryEmit 在订阅前发生会被丢
+        kotlinx.coroutines.yield()
 
         val payload = buildJsonArray { add(JsonPrimitive("hello")) }
         // 桌面 wire:header = [204, id] 两元素
@@ -77,6 +79,7 @@ class ChannelClientTest {
                 ),
             ),
         )
+        kotlinx.coroutines.yield()
         val event = withTimeout(5_000) { fired.await() }
         assertEquals("onX", event.event)
         job.cancel()
@@ -105,7 +108,11 @@ class ChannelClientTest {
         val arg = buildJsonArray { add(JsonPrimitive("workspacePath")); add(JsonPrimitive("/ws")) }
         client.listenEvent("zcode-agent", "onConversationFrameV4", arg)
 
-        val (header, body) = RpcSerialization.deserializeTwoSegments(sent!!)
+        // onSend 收到的是完整 RPC 物理帧(13 字节帧头 + 两段 body),先剥帧头再解两段
+        val frame = sent!!
+        val (header, body) = RpcSerialization.deserializeTwoSegments(
+            frame.copyOfRange(RpcProtocol.HEADER_LENGTH, frame.size),
+        )
         val h = header as kotlinx.serialization.json.JsonArray
         assertEquals(RpcRequestType.EVENT_LISTEN, h[0].toString().toInt())
         assertNotNull(body)
