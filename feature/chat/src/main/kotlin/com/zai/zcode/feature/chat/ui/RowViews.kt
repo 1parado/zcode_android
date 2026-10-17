@@ -1,6 +1,8 @@
 package com.zai.zcode.feature.chat.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,7 +40,7 @@ import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.LiveDot
 import com.zai.zcode.core.design.components.ZcodeStatus
 import com.zai.zcode.core.design.ZcodeMotion
-import com.zai.zcode.core.design.jellyClickable
+import com.zai.zcode.core.design.jellyPress
 import com.zai.zcode.feature.chat.ChatRepository
 import com.zai.zcode.feature.render.MarkdownContent
 
@@ -118,10 +120,18 @@ private fun ReasoningRow(row: ChatRepository.ChatRowKind.Reasoning) {
         animationSpec = tween(ZcodeMotion.COLLAPSE_MS, easing = ZcodeMotion.collapseEasing),
         label = "reasoningChevron",
     )
+    val rowInteraction = remember { MutableInteractionSource() }
     Column(
         Modifier
             .fillMaxWidth()
-            .jellyClickable { expanded = !expanded },
+            // Trade-off（spec §5.3）：思考行本身是次要信息，给它 ripple 会把注意力
+            // 从正文拉走；这里只要按压缩放这一层触达反馈，不叠加 ripple。
+            .jellyPress(rowInteraction)
+            .clickable(
+                interactionSource = rowInteraction,
+                indication = null,
+                onClick = { expanded = !expanded },
+            ),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
