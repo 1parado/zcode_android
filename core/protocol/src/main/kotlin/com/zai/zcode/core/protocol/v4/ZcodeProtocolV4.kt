@@ -13,6 +13,9 @@ import kotlinx.serialization.json.put
 
 private const val TAG = "ZcodeProtocolV4"
 
+/** 订阅应答超时：桌面可能要先预热 session runtime（zemote conversation.dart:821）。 */
+private const val SUBSCRIBE_TIMEOUT_MS = 60_000L
+
 /**
  * ZCode Protocol V4 会话门面（对齐 packages/ui/src/v4/agentV4ConnectionHandshake.ts +
  * agentConversationTransport.ts 的语义）。纯 JVM，无 Android 依赖；socket 写出由
@@ -149,7 +152,12 @@ class ZcodeProtocolV4(
         frameListenWorkspaceTarget = null
     }
 
-    /** 订阅会话 topic。返回 ack；initial snapshot 随后经 [onConversationFrame] 送达。 */
+    /**
+     * 订阅会话 topic。返回 ack；initial snapshot 随后经 [onConversationFrame] 送达。
+     *
+     * @param timeoutMs 默认 60s：与 [subscribeSessionsIndex] 同为订阅路径，桌面同样可能
+     * 先预热 runtime 才应答，15s 通道默认值会把慢应答切成取消。
+     */
     suspend fun subscribeConversation(
         workspacePath: String,
         sessionId: String,
@@ -157,6 +165,7 @@ class ZcodeProtocolV4(
         baseLogEpoch: String? = null,
         baseSeq: Long? = null,
         visibility: String? = "foreground",
+        timeoutMs: Long = SUBSCRIBE_TIMEOUT_MS,
     ): SubscribeAck {
         val result = channel.request(
             V4.CHANNEL_ZCODE_AGENT,
@@ -169,15 +178,25 @@ class ZcodeProtocolV4(
                 baseSeq,
                 visibility,
             ),
+            timeoutMs,
         )
         return SubscribeAck(raw = resultAsObject(result))
     }
 
-    /** 订阅 sessions-index topic（workspace 级，无 sessionId 维度）。 */
+    /**
+     * 订阅 sessions-index topic（workspace 级，无 sessionId 维度）。
+     *
+     * @param timeoutMs 默认 60s（而非 ChannelClient 的 15s）。
+     * 修复依据（真机 v0.2.14「点击工作区后一直转圈」）：zemote
+     * conversation.dart:818-821 对 subscribe 单独给 60s，注释写明「桌面可能要先
+     * 预热 session runtime 才应答，不能按 30s 通道默认值超时」。预热耗时超过 15s
+     * 时请求被取消，表现为订阅失败、列表永远空。
+     */
     suspend fun subscribeSessionsIndex(
         workspacePath: String,
         workspaceIdentity: String? = null,
         visibility: String? = "foreground",
+        timeoutMs: Long = SUBSCRIBE_TIMEOUT_MS,
     ): SubscribeAck {
         val result = channel.request(
             V4.CHANNEL_ZCODE_AGENT,
@@ -187,6 +206,7 @@ class ZcodeProtocolV4(
                 workspaceIdentity ?: boundWorkspaceIdentity,
                 visibility,
             ),
+            timeoutMs,
         )
         return SubscribeAck(raw = resultAsObject(result))
     }
