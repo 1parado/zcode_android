@@ -78,16 +78,23 @@ class V4WorkspaceIdentityTest {
         }
     }
 
+    /**
+     * 取某方法的订阅参数。
+     * 修复依据（真机 CI 39049995217 ClassCastException）：proxy-channel 约定
+     * `channel.call(propKey, [args...])`——RPC body 段是**参数数组**，params 对象
+     * 在数组第 0 位，不是裸 JsonObject（见 ChannelClient.send 的 wireArgs）。
+     */
     private fun subscribeParamsOf(
         frames: List<Pair<JsonArray, JsonElement?>>,
         method: String,
     ): JsonObject {
         val matches = frames.filter { (header, _) ->
-            header[0].jsonPrimitive.content.toInt() == RpcRequestType.PROMISE &&
+            header.size > 3 &&
+                header[0].jsonPrimitive.content.toInt() == RpcRequestType.PROMISE &&
                 header[3].jsonPrimitive.content == method
         }
         assertEquals(1, matches.size)
-        return matches[0].second as JsonObject
+        return (matches[0].second as JsonArray).first() as JsonObject
     }
 
     @Test
