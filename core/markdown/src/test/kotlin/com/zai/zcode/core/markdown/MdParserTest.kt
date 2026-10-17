@@ -54,7 +54,9 @@ class MdParserTest {
 
     @Test
     fun `inline bold italic code link math`() {
-        val spans = MdInlineParser.parse("**粗** *斜* `码` [链](https://a.b) $x^2$")
+        // 修复依据(run 39019873084 CI):Kotlin 字符串里裸写 $x^2$ 会被当作字符串模板,
+        // 编译期 Unresolved reference 'x';数学定界符需转义为 \$
+        val spans = MdInlineParser.parse("**粗** *斜* `码` [链](https://a.b) \$x^2\$")
         assertEquals(9, spans.size)
         assertTrue(spans[0] is MdSpan.Bold)
         assertTrue(spans[1] is MdSpan.Plain && spans[1].text == " ")
@@ -73,7 +75,8 @@ class MdParserTest {
 
     @Test
     fun `block math`() {
-        val blocks = MdParser.parse("$$\nE=mc^2\n$$")
+        // 修复依据(同上):$$ 同为字符串模板定界符,需转义
+        val blocks = MdParser.parse("\$\$\nE=mc^2\n\$\$")
         val m = blocks.filterIsInstance<MdBlock.MathBlock>().single()
         assertEquals("E=mc^2", m.latex)
     }
