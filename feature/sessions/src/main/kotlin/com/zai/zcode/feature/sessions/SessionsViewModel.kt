@@ -61,7 +61,7 @@ class SessionsViewModel @Inject constructor(
         }
     }
 
-    fun setFilter(f: SessionFilter) {
+    fun onFilterSelected(f: SessionFilter) {
         filter = f
         _filter.value = f
     }

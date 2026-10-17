@@ -99,7 +99,7 @@ fun SessionsScreen(
             horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
         ) {
             SessionFilter.entries.forEach { f ->
-                FilterChip(label = f.label, selected = filter == f, onClick = { viewModel.setFilter(f) })
+                FilterChip(label = f.label, selected = filter == f, onClick = { viewModel.onFilterSelected(f) })
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { viewModel.createSession(onOpenSession) }) {
