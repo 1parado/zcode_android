@@ -22,6 +22,7 @@ import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
+import com.zai.zcode.core.design.jellyClickable
 import com.zai.zcode.core.design.rememberBreatheAlpha
 
 /**
