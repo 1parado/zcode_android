@@ -1,7 +1,6 @@
 package com.zai.zcode.feature.chat.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -86,9 +85,14 @@ internal fun ApprovalDock(
             targetState = current,
             transitionSpec = {
                 (fadeIn(animationSpec = tween(ZcodeMotion.COLLAPSE_MS)) + slideInVertically { it / 4 })
-                    .togetherWith(fadeOut(animationSpec = tween(ZcodeMotion.COLLAPSE_MS)) + slideOutVertically { it / 4 })
-                    .using(SizeTransform(clip = false))
+                    .togetherWith(
+                        fadeOut(animationSpec = tween(ZcodeMotion.COLLAPSE_MS)) +
+                            slideOutVertically { it / 4 },
+                    )
             },
+            // contentKey 显式给 interactionId：换待决项时按 id 判定"这是另一张卡"，
+            // 而不是按数据类相等（服务端补字段会导致同一项也被当成新项重播动画）。
+            contentKey = { it.interactionId },
             label = "approvalDockItem",
         ) { item ->
             InteractionCard(
