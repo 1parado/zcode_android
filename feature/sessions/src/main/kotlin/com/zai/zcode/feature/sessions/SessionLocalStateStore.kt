@@ -34,7 +34,7 @@ class SessionLocalStateStore @Inject constructor(
             for (key in prefs.asMap().keys) {
                 if (key.name.startsWith(seenPrefix)) {
                     val id = key.name.removePrefix(seenPrefix)
-                    put(id, LocalState(pinned = id in pinned, lastSeenActivityAt = prefs[key] ?: 0L))
+                    put(id, LocalState(pinned = id in pinned, lastSeenActivityAt = prefs[key] as? Long ?: 0L))
                 }
             }
             // 已 pin 但还没记过 seen 的会话也要有状态
