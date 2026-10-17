@@ -33,6 +33,8 @@ dependencies {
     implementation(project(":core:network"))
     implementation(project(":core:protocol"))
     implementation(project(":core:design"))
+    implementation(project(":core:markdown"))
+    implementation(project(":feature:render"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

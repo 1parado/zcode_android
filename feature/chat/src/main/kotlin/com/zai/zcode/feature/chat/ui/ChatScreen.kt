@@ -35,6 +35,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.zai.zcode.core.design.CardCorner
 import com.zai.zcode.feature.chat.ChatRepository
 import com.zai.zcode.feature.chat.ChatViewModel
+import com.zai.zcode.feature.render.MarkdownContent
 
 /**
  * 对话页：行流（LazyColumn）+ 底部输入栏。
@@ -148,7 +149,11 @@ private fun ChatRowView(row: ChatRepository.ChatRow) {
                     row.text ?: row.inputText ?: "",
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
-                "assistantText" -> Text(row.text ?: "")
+                // Markdown 渲染层：标题/列表/表格/代码块/公式/行内样式（参考 lody-ios MarkdownView 管线）
+                "assistantText" -> MarkdownContent(
+                    raw = row.text ?: "",
+                    isStreaming = row.streaming,
+                )
                 "reasoning" -> Text(
                     row.text ?: "",
                     style = MaterialTheme.typography.bodySmall,

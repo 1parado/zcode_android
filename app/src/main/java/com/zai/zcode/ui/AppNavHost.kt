@@ -31,7 +31,7 @@ fun AppNavHost() {
                         popUpTo(Routes.CONNECT) { inclusive = true }
                     }
                 },
-                onScanQr = { /* 扫码入口 Phase 2 接入 */ },
+                onScanQr = { /* 扫码层已在 ConnectScreen 内部弹出，此处保留导航扩展点 */ },
             )
         }
         composable(Routes.SESSIONS) {

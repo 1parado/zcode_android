@@ -41,6 +41,23 @@ fun ConnectScreen(
     viewModel: ConnectViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // 扫码配对：页内弹层（不走路由），扫到二维码回填地址并尝试自动连接
+    var scanning by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (scanning) {
+        QrScanScreen(
+            onClose = { scanning = false },
+            onScanned = { raw ->
+                // 二维码内容：纯地址或 zcode://connect?host=...&token=... 形态都接受
+                parsePairingQr(raw)?.let { (host, token) ->
+                    viewModel.update {
+                        it.copy(serverUrl = host, token = token ?: it.token)
+                    }
+                    viewModel.connect()
+                }
+            },
+        )
+        return
+    }
 
     // 修复依据（P1-C，评审 2026-10-17）：导航由"本次连接成功"边沿（justConnected）驱动，
     // 而非"当前是 Ready"——否则从 Sessions 点设置重进本页会瞬间被弹回，改不了地址。
@@ -79,7 +96,11 @@ fun ConnectScreen(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = {
+            // 优先走宿主导航回调（保留扩展点）；本页直接弹扫码层
+            scanning = true
+            onScanQr()
+        }, modifier = Modifier.fillMaxWidth()) {
             Text("扫码配对")
         }
 
@@ -129,4 +150,20 @@ fun stateLabel(state: ZcodeConnection.State): String = when (state) {
     is ZcodeConnection.State.Handshaking -> "握手…"
     is ZcodeConnection.State.Failed -> "重连中…"
     ZcodeConnection.State.Disconnected -> "未连接"
+}
+
+/**
+ * 配对二维码解析：接受两种形态——
+ * 1) 纯服务器地址（http(s)://host:port）
+ * 2) zcode://connect?host=<address>[&token=<token>]
+ * 解析失败返回 null（扫码结果不是配对码，忽略并保持扫码层）。
+ */
+internal fun parsePairingQr(raw: String): Pair<String, String?>? {
+    val s = raw.trim()
+    if (s.startsWith("zcode://connect")) {
+        val uri = android.net.Uri.parse(s)
+        val host = uri.getQueryParameter("host") ?: return null
+        return host to uri.getQueryParameter("token")
+    }
+    return if (s.startsWith("http://") || s.startsWith("https://")) s to null else null
 }

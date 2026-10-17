@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 图标来源:项目根 icon.png(Z 字标)。前景用 PNG(源图为位图,无法转矢量);
+     背景色取图标底色 #2B2B2B,任意密度兜底走 mipmap-*dpi/ic_launcher.png。 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <background android:drawable="@color/ic_launcher_bg" />
+    <foreground android:drawable="@mipmap/ic_launcher_fg" />
 </adaptive-icon>

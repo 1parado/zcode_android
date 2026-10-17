@@ -20,6 +20,8 @@ navigationCompose = "2.9.6"
 datastore = "1.1.7"
 securityCrypto = "1.1.0"
 kotlinxCollectionsImmutable = "0.4.0"
+# LaTeX 渲染（GPL-2.0，仅供 ZCode 生态内部使用，隔离在 feature:render 内）
+jlatexmath = "0.2.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -57,6 +59,7 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", v
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+jlatexmath-android = { group = "ru.noties", name = "jlatexmath-android", version.ref = "jlatexmath" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
