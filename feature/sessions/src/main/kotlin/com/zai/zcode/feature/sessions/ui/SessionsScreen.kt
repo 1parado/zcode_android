@@ -210,6 +210,7 @@ fun SessionsScreen(
  * 其他 workspace 下的真实会话）。ModalBottomSheet 列出 bootstrap/serverInfo 的
  * 全部 workspace，点选交给 [SessionsViewModel.selectWorkspace]（relay 模式重开 bridge）。
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun WorkspacePickerSheet(
     workspaces: List<com.zai.zcode.core.network.ServerInfo.Workspace>,
