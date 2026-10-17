@@ -29,7 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.zai.zcode.core.design.CardCorner
+import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.feature.connect.ui.stateLabel
 import com.zai.zcode.feature.sessions.SessionsRepository
 import com.zai.zcode.feature.sessions.SessionsViewModel
@@ -143,7 +143,7 @@ private fun CreateSessionButton(enabled: Boolean, creating: Boolean, onClick: ()
 @Composable
 private fun SessionCard(item: SessionsRepository.SessionItem, onClick: () -> Unit) {
     Card(
-        shape = CardCorner,
+        shape = ZcodeShape.card,
         onClick = onClick,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -193,7 +193,7 @@ private fun SessionCard(item: SessionsRepository.SessionItem, onClick: () -> Uni
 @Composable
 private fun PhaseDot(phase: String) {
     val color = when (phase) {
-        "draft", "prewarming", "running" -> com.zai.zcode.core.design.StreamingGreen
+        "draft", "prewarming", "running" -> com.zai.zcode.core.design.LocalZcodeColors.current.running
         else -> MaterialTheme.colorScheme.outline
     }
     Box(

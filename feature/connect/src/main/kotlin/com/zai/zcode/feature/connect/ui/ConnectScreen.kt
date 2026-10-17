@@ -29,7 +29,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.zai.zcode.core.design.CardCorner
+import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.network.RelayConnectionParams
 import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.feature.connect.ConnectViewModel
@@ -147,7 +147,7 @@ fun ConnectScreen(
         }
 
         state.serverInfo?.let { info ->
-            Card(shape = CardCorner) {
+            Card(shape = ZcodeShape.card) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("已连接", style = MaterialTheme.typography.titleSmall)
                     Text("版本：${info.version ?: "?"}（协议 v${info.protocolVersion ?: "?"}）",

@@ -9,11 +9,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,7 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.zai.zcode.core.design.CardCorner
+import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.feature.chat.ChatRepository
 import com.zai.zcode.feature.chat.ChatViewModel
 import com.zai.zcode.feature.render.MarkdownContent
@@ -113,11 +119,11 @@ fun ChatScreen(
             if (ui.isRunning) {
                 // 运行中：显示停止按钮
                 IconButton(onClick = viewModel::stop) {
-                    Text("⏹", style = MaterialTheme.typography.titleLarge)
+                    Icon(Icons.Rounded.Stop, contentDescription = "停止", tint = LocalZcodeColors.current.error)
                 }
             } else {
                 IconButton(onClick = viewModel::send, enabled = !viewModel.sending) {
-                    Text("➤", style = MaterialTheme.typography.titleLarge)
+                    Icon(Icons.Rounded.ArrowUpward, contentDescription = "发送")
                 }
             }
         }
@@ -160,11 +166,20 @@ private fun ChatRowView(row: ChatRepository.ChatRow) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 "toolCall" -> Column {
-                    Text(
-                        "🔧 ${row.toolName ?: "tool"}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Rounded.Build,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = LocalZcodeColors.current.textSecondary,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            row.toolName ?: "tool",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = LocalZcodeColors.current.textSecondary,
+                        )
+                    }
                     row.inputText?.takeIf { it.isNotBlank() }?.let {
                         Text(
                             it,
@@ -178,7 +193,7 @@ private fun ChatRowView(row: ChatRepository.ChatRow) {
                 else -> row.text?.takeIf { it.isNotBlank() }?.let { Text(it) }
             }
             if (row.streaming) {
-                Text("●", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                Text("●", color = LocalZcodeColors.current.running, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
