@@ -60,6 +60,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 fun QrScanScreen(
     onClose: () -> Unit,
     onScanned: (String) -> Unit,
+    /** 非配对二维码等需要在扫码页直接提示的内容;非 null 时显示提示条。 */
+    message: String? = null,
 ) {
     // 修复依据(run 39017131812):LocalContext.current 是 @Composable,不能在 remember{} 内调用,先在外层取
     val context = LocalContext.current
@@ -121,6 +123,19 @@ fun QrScanScreen(
                 .size(240.dp)
                 .background(Color.Transparent, RoundedCornerShape(16.dp)),
         )
+        if (message != null) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(14.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
         if (permissionDenied || cameraErrorText != null) {
             Surface(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),

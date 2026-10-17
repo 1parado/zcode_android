@@ -47,12 +47,20 @@ fun ConnectScreen(
     // 扫码配对：页内弹层（不走路由），扫到二维码回填地址并尝试自动连接
     // 修复依据(run 39017131812):fully-qualified remember 配 by 委托无法解析 getValue/setValue,改用正常 import
     var scanning by remember { mutableStateOf(false) }
+    // 扫码层内显示的错误/提示信息(非配对码等)
+    var qrMessage by remember { mutableStateOf<String?>(null) }
     if (scanning) {
         QrScanScreen(
             onClose = { scanning = false },
+            message = qrMessage,
             onScanned = { raw ->
-                // 二维码内容：纯地址或 zcode://connect?host=...&token=... 形态都接受
-                parsePairingQr(raw)?.let { (host, token) ->
+                val parsed = parsePairingQr(raw)
+                if (parsed == null) {
+                    // 桌面端目前生成的是 Web 远控二维码(zcode.z.ai/remote/v4?sid=...),
+                    // 不是局域网直连配对码;直接回填会导致无限重连,改为明确提示。
+                    qrMessage = webRemoteQrHint(raw)
+                } else {
+                    val (host, token) = parsed
                     viewModel.update {
                         it.copy(serverUrl = host, token = token ?: it.token)
                     }
@@ -109,7 +117,11 @@ fun ConnectScreen(
         }
 
         Button(
-            onClick = viewModel::connect,
+            onClick = {
+                // 手动点连接前先停掉上一次的重连循环(用户报障:失败后一直自动重传)
+                viewModel.disconnect()
+                viewModel.connect()
+            },
             enabled = !state.connecting,
             modifier = Modifier.fillMaxWidth(),
         ) {
@@ -170,4 +182,20 @@ internal fun parsePairingQr(raw: String): Pair<String, String?>? {
         return host to uri.getQueryParameter("token")
     }
     return if (s.startsWith("http://") || s.startsWith("https://")) s to null else null
+}
+
+/**
+ * 桌面端二维码目前是 Web 远控链接(zcode.z.ai/remote/v3|v4?sid=&hash=&t=...),
+ * 走外部 relay 的浏览器远控体系,App 的局域网直连协议无法使用它。
+ * 检测到这类二维码时给出可操作提示,而不是回填地址触发无限重连。
+ */
+internal fun webRemoteQrHint(raw: String): String {
+    val isWebRemote = raw.contains("zcode.z.ai/remote") || raw.contains("/remote/v3") || raw.contains("/remote/v4")
+    return if (isWebRemote) {
+        "这是桌面端的「网页远控」二维码，手机 App 暂不支持此配对方式。\n" +
+            "请在 App 中手动输入电脑的局域网地址（如 http://192.168.1.10:3030）连接，" +
+            "或等后续版本支持扫码配对。"
+    } else {
+        "二维码内容不是可用的连接地址，请手动输入服务器地址。"
+    }
 }

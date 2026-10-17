@@ -103,7 +103,13 @@ class ConnectViewModel @Inject constructor(
         }
     }
 
-    fun disconnect() = connection.disconnect()
+    fun disconnect() {
+        // 修复依据(用户报障"扫码后一直自动重传"):失败后 wantConnected 仍为 true,
+        // connection 会按退避无限重连;用户改地址/放弃时必须显式停掉重连,
+        // 且清空上一次的错误,避免新表单残留旧失败原因。
+        connection.disconnect()
+        _uiState.value = _uiState.value.copy(connecting = false, error = null)
+    }
 
     /** UI 消费 justConnected 边沿后复位（P1-C）。 */
     fun consumeJustConnected() {
