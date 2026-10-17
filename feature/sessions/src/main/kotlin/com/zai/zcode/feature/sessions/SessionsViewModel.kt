@@ -1,5 +1,8 @@
 package com.zai.zcode.feature.sessions
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zai.zcode.core.network.ZcodeConnection
@@ -36,9 +39,9 @@ class SessionsViewModel @Inject constructor(
     }
 
     /** 创建中/失败提示（UI 局部状态）。 */
-    var creating by androidx.compose.runtime.mutableStateOf(false)
+    var creating by mutableStateOf(false)
         private set
-    var createError by androidx.compose.runtime.mutableStateOf<String?>(null)
+    var createError by mutableStateOf<String?>(null)
         private set
 
     /**
