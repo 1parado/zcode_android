@@ -268,7 +268,13 @@ fun buildConversationSubscribeParams(
     if (visibility != null) put("visibility", visibility)
 }
 
-/** subscribeSessionsIndexV4 参数（ZCodeAgentSessionsIndexSubscribeParams，无 sessionId 维度）。 */
+/**
+ * subscribeSessionsIndexV4 参数（ZCodeAgentSessionsIndexSubscribeParams，无 sessionId 维度）。
+ * 修复依据(真机 v0.2.13"会话列表零内容"): zemote 对同一 zcode host 的实测做法——订阅
+ * 参数带 runtimePolicy:"existing-only"(复用已运行的 CLI runtime,不为观察者拉起新进程,
+ * 缺 runtime 只进入 dormant 而不是 start-if-needed 缺省拉起)。Android 与 zemote 同为
+ * 手机远控观察者,应带同一策略。
+ */
 fun buildSessionsIndexSubscribeParams(
     workspacePath: String,
     workspaceIdentity: String? = null,
@@ -277,6 +283,7 @@ fun buildSessionsIndexSubscribeParams(
     put("workspacePath", workspacePath)
     if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
     if (visibility != null) put("visibility", visibility)
+    put("runtimePolicy", "existing-only")
 }
 
 /** subscribe ACK（{ack:{subscriptionId, mode, logEpoch}}）。 */

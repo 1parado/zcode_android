@@ -186,7 +186,13 @@ class RpcFrameTransport(
             if (message.size != assembly.messageBytes) {
                 ZLog.w(TAG, "message $ms size mismatch")
             } else if (assembly.checksum == null || crc32WireBytes(message) == assembly.checksum) {
-                scope.launch { _messages.emit(message) }
+                // 修复依据(真机 v0.2.13"订阅 ACK 成功但会话列表空"):原实现用
+                // scope.launch { _messages.emit(...) } 投递重组结果——launch 不保序,
+                // 多个 rpc-frame 几乎同时重组完成时帧序会被打乱。V4 帧靠 (fromSeq,toSeq]
+                // 单调推进,乱序 delta 被 SessionsIndexReducer 丢弃,表现为"订阅成功
+                // 但列表永远空"。acceptPayload 只在单一 relay collect 协程里被调用,
+                // 此处同步 tryEmit 即保序(与 ChannelClient.handleRegular 同族修复)。
+                _messages.tryEmit(message)
                 // 修复依据(真机日志"bridge degraded: rpc-transport-fault"每~30-45s 周期性
                 // 出现):桌面 acknowledged relay 协议(webRemoteControlAcknowledgedRelayProtocol
                 // 的 rawIdentityMatches)对每个入站 rpc-frame-ack 做 identity 严格校验,

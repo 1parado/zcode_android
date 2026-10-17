@@ -61,6 +61,18 @@ class ZcodeProtocolV4(
     private var sessionsListenerId: Int? = null
     private var frameListenWorkspaceTarget: JsonObject? = null
 
+    /**
+     * attachFrameListener 绑定的 workspaceIdentity。
+     * 修复依据(真机 v0.2.13"订阅 ACK 成功但零帧"):事件监听(attachFrameListener)带了
+     * workspaceIdentity,而 subscribe*/sendCommand 由上层 Repository 调用时没带,
+     * 两端 workspaceKey 推导不一致(identity.trim()||path vs 纯 path)→ 订阅登记在
+     * A key、帧监听挂在 B key,routedEvent 的 routedEventKey 对不上,帧永不 fan-out。
+     * AGENTS.md 铁律:远程链路必须贯穿传递 workspaceIdentity。此处让门面记住 attach
+     * 时绑定的 identity,所有后续 subscribe/命令在未显式指定时自动带上。
+     */
+    @Volatile
+    private var boundWorkspaceIdentity: String? = null
+
     init {
         // ChannelClient EVENT_FIRE → wire 帧。payload 是单个 wire 帧的 JsonObject。
         // 修复依据（P0-4）：sessions-index 帧走 onDynamicSessionsIndexFrame 独立事件，
@@ -119,6 +131,7 @@ class ZcodeProtocolV4(
      */
     fun attachFrameListener(workspacePath: String, workspaceIdentity: String? = null) {
         val target = buildWorkspaceTarget(workspacePath, workspaceIdentity)
+        boundWorkspaceIdentity = workspaceIdentity?.takeIf { it.isNotBlank() }
         frameListenerId?.let { channel.disposeEvent(it) }
         sessionsListenerId?.let { channel.disposeEvent(it) }
         // 修复依据（P0-4）：conversation 与 sessions-index 各挂一条动态事件监听。
@@ -149,7 +162,12 @@ class ZcodeProtocolV4(
             V4.CHANNEL_ZCODE_AGENT,
             V4.METHOD_CONVERSATION_SUBSCRIBE,
             buildConversationSubscribeParams(
-                workspacePath, sessionId, workspaceIdentity, baseLogEpoch, baseSeq, visibility,
+                workspacePath,
+                sessionId,
+                workspaceIdentity ?: boundWorkspaceIdentity,
+                baseLogEpoch,
+                baseSeq,
+                visibility,
             ),
         )
         return SubscribeAck(raw = resultAsObject(result))
@@ -164,7 +182,11 @@ class ZcodeProtocolV4(
         val result = channel.request(
             V4.CHANNEL_ZCODE_AGENT,
             V4.METHOD_SESSIONS_INDEX_SUBSCRIBE,
-            buildSessionsIndexSubscribeParams(workspacePath, workspaceIdentity, visibility),
+            buildSessionsIndexSubscribeParams(
+                workspacePath,
+                workspaceIdentity ?: boundWorkspaceIdentity,
+                visibility,
+            ),
         )
         return SubscribeAck(raw = resultAsObject(result))
     }
@@ -176,7 +198,9 @@ class ZcodeProtocolV4(
             V4.METHOD_CONVERSATION_UNSUBSCRIBE,
             buildJsonObject {
                 put("workspacePath", workspacePath)
-                if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+                if (!(workspaceIdentity ?: boundWorkspaceIdentity).isNullOrBlank()) {
+                    put("workspaceIdentity", workspaceIdentity ?: boundWorkspaceIdentity)
+                }
                 put("subscriptionId", subscriptionId)
             }
         )
@@ -191,9 +215,10 @@ class ZcodeProtocolV4(
         envelope: JsonObject,
         workspaceIdentity: String? = null,
     ): CommandAck {
+        val identity = workspaceIdentity ?: boundWorkspaceIdentity
         val params = buildJsonObject {
             put("workspacePath", workspacePath)
-            if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+            if (!identity.isNullOrBlank()) put("workspaceIdentity", identity)
             put("envelope", envelope)
         }
         // 说明：buildJsonObject 内的 put(String, String) 来自 kotlinx.serialization.json
