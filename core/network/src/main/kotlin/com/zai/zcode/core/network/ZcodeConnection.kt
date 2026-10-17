@@ -151,20 +151,6 @@ class ZcodeConnection(
     /**
      * 建立（或重建）连接。重复调用以最后一次为准。
      * 发现 + 认证 + WS + V4 握手全部完成前 state 保持在中间态。
-     */
-    fun connect(serverUrl: String, authToken: String?) {
-        scope.launch { lifecycleMutex.withLock {
-            desiredUrl = serverUrl.trimEnd('/')
-            desiredToken = authToken
-            wantConnected.set(true)
-            reconnectAttempt = 0
-            startPipeline()
-        } }
-    }
-
-    /**
-     * 建立（或重建）连接。重复调用以最后一次为准。
-     * 发现 + 认证 + WS + V4 握手全部完成前 state 保持在中间态。
      *
      * relay 模式：url 是桌面端网页远控二维码（zcode.z.ai/remote/v4?sid=&hash=&t=...）时，
      * 直接走 relay 配对 + workspace bridge，无需局域网 server（用户报障"扫桌面二维码
@@ -224,7 +210,7 @@ class ZcodeConnection(
                     zcodeType(p) == "bootstrap-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull ==
                             sent["requestId"]?.jsonPrimitive?.contentOrNull
-                }
+                })
                 val info = relayServerInfoFromBootstrap(boot["result"] as? JsonObject)
                 _serverInfo.value = info
 
@@ -378,7 +364,7 @@ class ZcodeConnection(
             (zcodeType(p) == "workspace-bridge-ready" || zcodeType(p) == "workspace-bridge-error") &&
                 p["bridgeSessionId"]?.jsonPrimitive?.contentOrNull ==
                     sent["bridgeSessionId"]?.jsonPrimitive?.contentOrNull
-        }
+        })
         if (zcodeType(res) == "workspace-bridge-error") {
             throw IllegalStateException("workspace-bridge-error: ${res["error"]?.jsonPrimitive?.contentOrNull}")
         }
@@ -447,7 +433,7 @@ class ZcodeConnection(
                 }, match = { p, sent ->
                     zcodeType(p) == "workspace-reconnect-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull == sent["requestId"]?.jsonPrimitive?.contentOrNull
-                }
+                })
                 if ((res["success"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true") {
                     ZLog.i(TAG, "bridge reconnected (${attempt + 1})")
                     return
