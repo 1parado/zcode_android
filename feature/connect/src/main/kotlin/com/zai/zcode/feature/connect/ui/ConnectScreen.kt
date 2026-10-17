@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.zai.zcode.core.design.CardCorner
+import com.zai.zcode.core.network.RelayConnectionParams
 import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.feature.connect.ConnectViewModel
 
@@ -54,17 +55,24 @@ fun ConnectScreen(
             onClose = { scanning = false },
             message = qrMessage,
             onScanned = { raw ->
-                val parsed = parsePairingQr(raw)
-                if (parsed == null) {
-                    // 桌面端目前生成的是 Web 远控二维码(zcode.z.ai/remote/v4?sid=...),
-                    // 不是局域网直连配对码;直接回填会导致无限重连,改为明确提示。
-                    qrMessage = webRemoteQrHint(raw)
-                } else {
-                    val (host, token) = parsed
-                    viewModel.update {
-                        it.copy(serverUrl = host, token = token ?: it.token)
-                    }
+                // relay 直连：桌面端网页远控二维码(zcode.z.ai/remote/v4?sid=...)直接解析
+                // 为 relay 连接参数，走 wss://<host>/ws 配对+bridge（用户报障"扫桌面
+                // 二维码链接失败"的正解）。解析失败才提示非配对码。
+                if (RelayConnectionParams.parse(raw) != null) {
+                    viewModel.disconnect()
+                    viewModel.update { it.copy(serverUrl = raw.trim(), token = it.token) }
                     viewModel.connect()
+                } else {
+                    val parsed = parsePairingQr(raw)
+                    if (parsed == null) {
+                        qrMessage = nonPairingQrHint(raw)
+                    } else {
+                        val (host, token) = parsed
+                        viewModel.update {
+                            it.copy(serverUrl = host, token = token ?: it.token)
+                        }
+                        viewModel.connect()
+                    }
                 }
             },
         )
@@ -185,16 +193,14 @@ internal fun parsePairingQr(raw: String): Pair<String, String?>? {
 }
 
 /**
- * 桌面端二维码目前是 Web 远控链接(zcode.z.ai/remote/v3|v4?sid=&hash=&t=...),
- * 走外部 relay 的浏览器远控体系,App 的局域网直连协议无法使用它。
- * 检测到这类二维码时给出可操作提示,而不是回填地址触发无限重连。
+ * 非 relay、非局域网配对码的扫码结果提示（relay 分支已在 [RelayConnectionParams.parse]
+ * 命中并直接连接，此函数只兜底其余内容）。
  */
-internal fun webRemoteQrHint(raw: String): String {
+internal fun nonPairingQrHint(raw: String): String {
     val isWebRemote = raw.contains("zcode.z.ai/remote") || raw.contains("/remote/v3") || raw.contains("/remote/v4")
     return if (isWebRemote) {
-        "这是桌面端的「网页远控」二维码，手机 App 暂不支持此配对方式。\n" +
-            "请在 App 中手动输入电脑的局域网地址（如 http://192.168.1.10:3030）连接，" +
-            "或等后续版本支持扫码配对。"
+        "这是桌面端的「网页远控」二维码，但缺少配对参数（sid/hash/t），无法直连。\n" +
+            "请重新扫码，或手动输入电脑的局域网地址（如 http://192.168.1.10:3030）。"
     } else {
         "二维码内容不是可用的连接地址，请手动输入服务器地址。"
     }

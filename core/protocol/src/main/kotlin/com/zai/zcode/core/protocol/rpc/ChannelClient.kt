@@ -76,6 +76,15 @@ class ChannelClient(
         }
     }
 
+    /**
+     * relay bridge 路径的下行入口：rpc-frame 重组出的逻辑消息就是完整 IPC 物理帧
+     * （zemote 确认：bridge 值流无 13 字节传输层再包一层，desktop 在同一传输上按
+     * 完整 IPC 帧解析）。与局域网 [onMessage] 的区别仅是没有 socket 层帧头。
+     */
+    fun onMessageRaw(body: ByteArray) {
+        handleRegular(RpcMessage(RpcProtocol.MSG_REGULAR, 0, 0, body))
+    }
+
     private fun handleRegular(message: RpcMessage) {
         val (header, body) = try {
             RpcSerialization.deserializeTwoSegments(message.body)
