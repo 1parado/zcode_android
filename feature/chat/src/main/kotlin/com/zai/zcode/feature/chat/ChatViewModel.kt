@@ -70,4 +70,34 @@ class ChatViewModel @Inject constructor(
     fun stop() {
         viewModelScope.launch { repository.stop() }
     }
+
+    /**
+     * 解决一个待决交互（审批放行 / 用户输入）。
+     *
+     * **步进而非全批**：多个待决时 UI 一次只呈现一个（[currentInteraction]），
+     * 逐个确认。批量放行会把"我同意这个命令"变成"我同意接下来所有命令"，
+     * 手机上一次误触的代价太大。
+     *
+     * @param optionId 服务端下发的选项 id，绝不由客户端合成
+     */
+    fun resolveInteraction(interactionId: String, optionId: String? = null, freeText: String? = null) {
+        if (resolvingId != null) return // 单飞：连点两下不会发出两个 resolve
+        resolvingId = interactionId
+        resolveError = null
+        viewModelScope.launch {
+            val ok = repository.resolveInteraction(interactionId, optionId, freeText)
+            resolvingId = null
+            if (!ok) resolveError = "没能提交，电脑端可能已断开"
+        }
+    }
+
+    /** 正在提交的交互 id（null = 空闲）。单飞 + 该卡片显示提交中。 */
+    var resolvingId by mutableStateOf<String?>(null)
+        private set
+
+    /** 提交失败提示。 */
+    var resolveError by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissResolveError() { resolveError = null }
 }

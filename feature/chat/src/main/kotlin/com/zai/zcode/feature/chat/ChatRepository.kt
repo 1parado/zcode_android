@@ -2,7 +2,10 @@ package com.zai.zcode.feature.chat
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.rpc.asArrayOrNull
+import com.zai.zcode.core.protocol.rpc.asBooleanOrNull
 import com.zai.zcode.core.protocol.rpc.asLongOrNull
+import com.zai.zcode.core.protocol.rpc.asObjectOrNull
 import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import com.zai.zcode.core.protocol.v4.RowView
 import com.zai.zcode.core.protocol.v4.TopicFrame
@@ -14,6 +17,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 
 private const val TAG = "ChatRepository"
 
@@ -147,6 +153,40 @@ class ChatRepository(
         /** phase 是封闭枚举（sessionPhaseSchema：draft、prewarming、running、
          *  completedSuccess、completedInterrupted、error），UI 运行态判定不猜子串（评审 P3）。 */
         val isRunning: Boolean = false,
+        /**
+         * 待决交互（state.pendingInteractions）。手机不在电脑前时命令卡在这里，
+         * 这是远程操控最核心的一块屏幕——列表为空则不渲染 Dock。
+         */
+        val pendingInteractions: List<PendingInteraction> = emptyList(),
+    )
+
+    /**
+     * 一个待决交互（snapshot.ts pendingInteractionSchema 投影）。
+     *
+     * **安全铁律**：[options] 只承载服务端下发的 optionId/label/kind，客户端绝不
+     * 自己拼 optionId（硬编码 "allow"/"deny" 在新版服务端上会静默变成别的语义）。
+     * 服务端没给 options（旧 CLI）时列表为空，UI 显示"请在电脑端处理"而不是伪造按钮。
+     */
+    data class PendingInteraction(
+        val interactionId: String,
+        val kind: String,
+        val prompt: String,
+        val detail: String? = null,
+        /** 工具名（permission 时为被拦下的工具）。 */
+        val toolName: String? = null,
+        val options: List<InteractOption> = emptyList(),
+        /** 允许自由文本（userInput.freeText / permission.freeText）。 */
+        val freeText: Boolean = false,
+        /** 敏感输入（userInput.sensitive）：不入草稿、不落历史。 */
+        val sensitive: Boolean = false,
+    )
+
+    /** 一个可点选项：optionId 是服务端事实，label 是给人看的。 */
+    data class InteractOption(
+        val optionId: String,
+        val label: String,
+        /** permission：allowOnce / allowAlways / deny / custom；userInput 为 null。 */
+        val kind: String? = null,
     )
 
     private val reducer = com.zai.zcode.core.protocol.v4.ConversationReducer().apply {
@@ -283,7 +323,140 @@ class ChatRepository(
             // 不在 UI 里 contains("run") 猜子串
             isRunning = st.state?.get("phase").asStringOrNull()
                 ?.let { it == "draft" || it == "prewarming" || it == "running" } == true,
+            pendingInteractions = projectPendingInteractions(st.state),
         )
+    }
+
+    /**
+     * state.pendingInteractions → [PendingInteraction]（snapshot.ts:311 的投影）。
+     *
+     * 宽容解析：单个交互结构不合预期就跳过它，不至于让整份快照（连同已经解析好的
+     * 其他交互）一起消失。用户宁可少看一个审批卡，也不该看到空白页。
+     */
+    private fun projectPendingInteractions(state: JsonObject?): List<PendingInteraction> {
+        val list = state?.get("pendingInteractions").asArrayOrNull() ?: return emptyList()
+        return list.mapNotNull { el ->
+            val raw = el.asObjectOrNull() ?: return@mapNotNull null
+            val id = raw["interactionId"].asStringOrNull() ?: return@mapNotNull null
+            val kind = raw["kind"].asStringOrNull() ?: return@mapNotNull null
+            val payload = raw["payload"].asObjectOrNull() ?: return@mapNotNull null
+            when (kind) {
+                "permission" -> PendingInteraction(
+                    interactionId = id,
+                    kind = kind,
+                    prompt = payload["summary"].asStringOrNull()
+                        ?: payload["toolName"].asStringOrNull()
+                        ?: "需要授权",
+                    toolName = payload["toolName"].asStringOrNull(),
+                    options = projectPermissionOptions(payload),
+                    freeText = payload["freeText"].asBooleanOrNull() == true,
+                )
+
+                "userInput" -> PendingInteraction(
+                    interactionId = id,
+                    kind = kind,
+                    prompt = payload["prompt"].asStringOrNull() ?: "需要你输入",
+                    toolName = payload["toolName"].asStringOrNull(),
+                    options = projectUserInputOptions(payload),
+                    freeText = payload["freeText"].asBooleanOrNull() == true,
+                    sensitive = payload["sensitive"].asBooleanOrNull() == true,
+                )
+
+                // workspaceHookReview 的载荷形状与审批不同（review items 而非 options），
+                // 手机端不猜它的语义——给出可读提示，由用户在桌面处理。
+                else -> PendingInteraction(
+                    interactionId = id,
+                    kind = kind,
+                    prompt = when (kind) {
+                        "workspaceHookReview" -> "Hook 审查需要确认"
+                        else -> "需要你的确认"
+                    },
+                )
+            }
+        }
+    }
+
+    /**
+     * permission options（permissionRequestPayloadSchema）：optionId/label/kind。
+     * fullAccessOption 是 additive 的独立能力（snapshot.ts:246），服务端给了才追加，
+     * 客户端绝不自己合成——"全权放行"是一次性把权限交出去，只能由服务端定义。
+     */
+    private fun projectPermissionOptions(payload: JsonObject): List<InteractOption> {
+        val options = payload["options"].asArrayOrNull()?.mapNotNull { el ->
+            val o = el.asObjectOrNull() ?: return@mapNotNull null
+            val optionId = o["optionId"].asStringOrNull() ?: return@mapNotNull null
+            InteractOption(
+                optionId = optionId,
+                label = o["label"].asStringOrNull() ?: optionId,
+                kind = o["kind"].asStringOrNull(),
+            )
+        } ?: emptyList()
+        val fullAccess = payload["fullAccessOption"].asObjectOrNull()?.let { o ->
+            val optionId = o["optionId"].asStringOrNull() ?: return@let null
+            InteractOption(
+                optionId = optionId,
+                label = o["label"].asStringOrNull() ?: "放行全部",
+                kind = o["kind"].asStringOrNull(),
+            )
+        }
+        return if (fullAccess == null) options else options + fullAccess
+    }
+
+    /** userInput options（{optionId,label}）；AskUserQuestion 的多题走 questions 不用这里。 */
+    private fun projectUserInputOptions(payload: JsonObject): List<InteractOption> =
+        payload["options"].asArrayOrNull()?.mapNotNull { el ->
+            val o = el.asObjectOrNull() ?: return@mapNotNull null
+            val optionId = o["optionId"].asStringOrNull() ?: return@mapNotNull null
+            InteractOption(optionId, o["label"].asStringOrNull() ?: optionId)
+        } ?: emptyList()
+
+    /**
+     * 解决一个待决交互（resolveInteraction，command.ts:219）。
+     *
+     * 修复依据（远程操控核心场景）：人不在电脑前，命令卡在审批上就永远不动了。
+     * 这一步是产品存在的意义所在。
+     *
+     * 幂等：服务端先到先得，晚到返回 reasonCode=proto.alreadyResolved（command.ts:220
+     * 注释）。那不是失败——说明有人在别处（桌面 / 另一个客户端）已经处理了，
+     * 这里按成功返回，UI 撤掉卡片即可，不该弹"失败"。
+     *
+     * @param optionId 服务端下发的选项 id（[InteractOption.optionId]）
+     * @param freeText 自由文本答案（userInput/freeText 场景）
+     */
+    suspend fun resolveInteraction(
+        interactionId: String,
+        optionId: String? = null,
+        freeText: String? = null,
+    ): Boolean {
+        val p = connection.protocol.value ?: return false
+        return runCatching {
+            val answer = buildJsonObject {
+                if (optionId != null) put("optionId", optionId)
+                if (freeText != null) put("freeText", freeText)
+            }
+            val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
+                commandId = java.util.UUID.randomUUID().toString(),
+                clientId = clientId,
+                sessionId = sessionId,
+                type = "resolveInteraction",
+                payload = buildJsonObject {
+                    put("interactionId", interactionId)
+                    put("answer", answer)
+                },
+            )
+            val ack = p.sendCommand(workspacePath, envelope, workspaceIdentity)
+            if (ack.status == "accepted") return@runCatching true
+            // alreadyResolved：别人先处理了。按成功对待——卡片该消失，不是该报错。
+            if (ack.reasonCode?.endsWith("alreadyResolved") == true) {
+                ZLog.i(TAG, "interaction $interactionId already resolved elsewhere")
+                return@runCatching true
+            }
+            ZLog.w(TAG, "resolveInteraction rejected: ${ack.status} ${ack.reasonCode ?: ""}")
+            false
+        }.getOrElse {
+            ZLog.w(TAG, "resolveInteraction failed: ${it.message}")
+            false
+        }
     }
 
     /**
@@ -343,7 +516,10 @@ class ChatRepository(
                 payload = com.zai.zcode.core.protocol.v4.buildSendTextPayload(text),
                 baseRevision = _ui.value.revision,
             )
-            val ack = p.sendCommand(workspacePath, envelope)
+            // 修复依据（AGENTS.md「Workspace Identity」）：远程链路必须显式带 identity，
+            // 不能靠 protocol 的 boundWorkspaceIdentity 兜底——换 workspace 而实例
+            // 未重建时兜底值是旧的，命令会落到另一个工作区。
+            val ack = p.sendCommand(workspacePath, envelope, workspaceIdentity)
             ack.status == "accepted"
         }.getOrElse {
             ZLog.w(TAG, "sendText failed: ${it.message}")
@@ -362,7 +538,7 @@ class ChatRepository(
                 type = "stop",
                 payload = kotlinx.serialization.json.JsonObject(emptyMap()),
             )
-            val ack = p.sendCommand(workspacePath, envelope)
+            val ack = p.sendCommand(workspacePath, envelope, workspaceIdentity)
             ack.status == "accepted"
         }.getOrElse {
             ZLog.w(TAG, "stop failed: ${it.message}")

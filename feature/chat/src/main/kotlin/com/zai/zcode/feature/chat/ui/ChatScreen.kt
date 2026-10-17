@@ -1,6 +1,7 @@
 package com.zai.zcode.feature.chat.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,6 +58,7 @@ fun ChatScreen(
 ) {
     val ui by viewModel.ui.collectAsState()
     val listState = rememberLazyListState()
+    val zc = LocalZcodeColors.current
 
     // 是否已停在底部：决定「跟随新内容」还是「累计未读」。
     // derivedStateOf 让它只在跨越阈值时变，滚动过程中不触发额外重组。
@@ -93,6 +95,26 @@ fun ChatScreen(
                 listState = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
+            // 审批 Dock 挂在输入栏上方：命令卡住时用户视线本来就在底部，
+            // 而且它与「正在输入什么」是同一块注意力区域，不该分开放。
+            ApprovalDock(
+                interactions = ui.pendingInteractions,
+                resolvingId = viewModel.resolvingId,
+                onSubmit = { id, optionId, freeText ->
+                    viewModel.resolveInteraction(id, optionId, freeText)
+                },
+            )
+            viewModel.resolveError?.let { msg ->
+                Text(
+                    msg,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = viewModel::dismissResolveError)
+                        .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm),
+                    style = ZcodeType.uiXs,
+                    color = zc.error,
+                )
+            }
             ChatComposer(viewModel = viewModel, isRunning = ui.isRunning)
         }
 

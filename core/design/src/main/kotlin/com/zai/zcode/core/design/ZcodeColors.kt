@@ -50,6 +50,12 @@ val StatusQueued = StatusPalette(Color(0xFF38BDF8), Color(0xFF0284C7))
 val DiffAdded = StatusPalette(Color(0xFF4ADE80), Color(0xFF16A34A))
 val DiffRemoved = StatusPalette(Color(0xFFF87171), Color(0xFFDC2626))
 
+// —— 填充态 attention 的前景 ——
+// Dark 侧 attention 是亮琥珀 #FBBF24，压深字；Light 侧是深琥珀 #B45309，压白字。
+// 两侧都保证 4.5:1 以上，不是靠猜。
+val OnAttentionDark = Color(0xFF3D2A00)
+val OnAttentionLight = Color(0xFFFFFFFF)
+
 /** 语义色集合，经 [ZcodeTheme] 注入；UI 一律从这里取色，不直接引用具体 hex。 */
 @Immutable
 data class ZcodeColors(
@@ -73,6 +79,14 @@ data class ZcodeColors(
     val queued: Color,
     val diffAdded: Color,
     val diffRemoved: Color,
+    /**
+     * 填充态 attention 按钮上的前景色（审批「允许一次」这类主操作）。
+     *
+     * 修复依据（v0.2.18 审批 Dock）：attention 是琥珀色，深浅两侧亮度都不够稳定，
+     * 直接把文本色叠上去在 Light 下会掉到 3:1 以下。这里给一个与填充色配对的
+     * 前景色（深色字压亮琥珀），而不是让调用方猜 Color.White 还是 Color.Black。
+     */
+    val onAttention: Color,
 ) {
     companion object {
         fun of(darkTheme: Boolean): ZcodeColors = if (darkTheme) {
@@ -85,6 +99,7 @@ data class ZcodeColors(
                 running = StatusRunning.resolve(true), attention = StatusAttention.resolve(true),
                 error = StatusError.resolve(true), queued = StatusQueued.resolve(true),
                 diffAdded = DiffAdded.resolve(true), diffRemoved = DiffRemoved.resolve(true),
+                onAttention = OnAttentionDark,
             )
         } else {
             ZcodeColors(
@@ -96,6 +111,7 @@ data class ZcodeColors(
                 running = StatusRunning.resolve(false), attention = StatusAttention.resolve(false),
                 error = StatusError.resolve(false), queued = StatusQueued.resolve(false),
                 diffAdded = DiffAdded.resolve(false), diffRemoved = DiffRemoved.resolve(false),
+                onAttention = OnAttentionLight,
             )
         }
     }
