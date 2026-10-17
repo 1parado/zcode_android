@@ -218,7 +218,9 @@ class ZcodeConnection(
                     put("zcode_type", "bootstrap-request")
                     put("requestId", "bootstrap-" + newRequestId())
                 }
-                val boot = relayRequest(bootRequest) { p, sent ->
+                // 修复依据(run 39020514047 CI):relayRequest 的尾随 lambda 会绑定到
+                // 最后一个参数 timeoutMs(Long),matcher 必须用命名参数显式传递
+                val boot = relayRequest(bootRequest, match = { p, sent ->
                     zcodeType(p) == "bootstrap-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull ==
                             sent["requestId"]?.jsonPrimitive?.contentOrNull
@@ -372,7 +374,7 @@ class ZcodeConnection(
             put("bridgeGeneration", gen)
             put("workspaceKey", workspace.path)
             recoveryId?.let { put("recoveryId", it) }
-        }) { p, sent ->
+        }, match = { p, sent ->
             (zcodeType(p) == "workspace-bridge-ready" || zcodeType(p) == "workspace-bridge-error") &&
                 p["bridgeSessionId"]?.jsonPrimitive?.contentOrNull ==
                     sent["bridgeSessionId"]?.jsonPrimitive?.contentOrNull
@@ -442,7 +444,7 @@ class ZcodeConnection(
                     put("zcode_type", "workspace-reconnect-request")
                     put("requestId", "wr-" + newRequestId())
                     put("workspaceKey", ws0.path)
-                }) { p, sent ->
+                }, match = { p, sent ->
                     zcodeType(p) == "workspace-reconnect-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull == sent["requestId"]?.jsonPrimitive?.contentOrNull
                 }
