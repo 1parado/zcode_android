@@ -31,7 +31,7 @@ object V4 {
     const val ROWS_RANGE_MAX_LIMIT = 200
 
     // V4 服务面方法名（对齐 zcodeAgent.ts 的 IZCodeAgentService；经 toService Proxy
-    // 机制，方法名直接作为 zcode-agent 通道上的 call/listen name，不是 v4/* 路径）。
+    // 机制，方法名直接作为 zcode-agent 通道上的 call/listen name，不是 v4 开头的路径）。
     const val METHOD_HELLO = "helloConversationV4"
     const val METHOD_INITIALIZE = "initializeConversationV4"
     const val METHOD_CONVERSATION_SUBSCRIBE = "subscribeConversationV4"

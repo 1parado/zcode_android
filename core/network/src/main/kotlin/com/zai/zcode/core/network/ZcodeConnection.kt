@@ -45,7 +45,8 @@ private const val TAG = "ZcodeConnection"
  *        └────────────── (失败/断开，自动重连) ◄────────┘
  * ```
  *
- * 认证语义（对齐 packages/server）：`GET /api/*?token=` 首次访问下发 HttpOnly
+ * 认证语义（对齐 packages/server）：GET /api/任意端点?token=xxx 首次访问下发 HttpOnly
+ * （注意：Kotlin 块注释可嵌套，KDoc 里不能出现裸的"星杠"序列，否则注释不闭合）
  * Cookie `zcode_lite_token`，后续凭 Cookie。OkHttp CookieJar 只在内存持有 cookie，
  * token 本体由上层（EncryptedDataStore）持久化，不落本类。
  *
