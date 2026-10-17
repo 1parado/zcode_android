@@ -381,6 +381,11 @@ class ZcodeConnection(
             scope = scope,
         )
         transport.start()
+        // 修复依据(真机日志 17:49"rpc-frame before bridge ready, dropped"):桌面在
+        // workspace-bridge-ready 后立即推送 Initialize 等帧,而 frameTransport 原来在
+        // 函数末尾才赋值,导致这些帧被丢弃→ ChannelClient 永远不 IDLE→15s 超时。
+        // transport 创建即注册,早于等待 IDLE。
+        frameTransport = transport
         // 下行：transport 重组出的完整 body 直接喂 ChannelClient（绕过 IPC 物理帧解码）；
         // 上行：ChannelClient.onSend 的物理帧原样作为逻辑消息分片发出。
         // ChannelClient 产出的是 IPC 物理帧（header+body 已 serializeTwoSegments），
@@ -418,7 +423,6 @@ class ZcodeConnection(
                 put("name", "ZCode Android")
             })
         })
-        frameTransport = transport
     }
 
     /** bridge-degraded 恢复：先便宜的 reconnect-request，失败重开 bridge（带 recoveryId）。 */
@@ -580,7 +584,12 @@ class ZcodeConnection(
         _state.value = State.Failed(reason, retrying = true)
         ZLog.i(TAG, "reconnect in ${delayMs}ms (attempt $reconnectAttempt): $reason")
         kotlinx.coroutines.delay(delayMs)
-        if (wantConnected.get()) startPipeline()
+        // 修复依据(真机日志 17:50"server-info unreachable 循环"):relay 模式失败重连
+        // 原来走局域网 startPipeline(),对二维码 URL 做 HTTP 请求必然 404 死循环。
+        // relay 失败须重走 relay 管线(重新配对+开 bridge)。
+        if (wantConnected.get()) {
+            if (desiredRelay != null) startRelayPipeline() else startPipeline()
+        }
     }
 
     private fun teardown(reason: String) {
