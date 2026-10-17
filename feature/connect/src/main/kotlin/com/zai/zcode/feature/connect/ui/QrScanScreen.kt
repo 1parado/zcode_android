@@ -61,9 +61,11 @@ fun QrScanScreen(
     onClose: () -> Unit,
     onScanned: (String) -> Unit,
 ) {
+    // 修复依据(run 39017131812):LocalContext.current 是 @Composable,不能在 remember{} 内调用,先在外层取
+    val context = LocalContext.current
     var hasPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(LocalContext.current, Manifest.permission.CAMERA) ==
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED
         )
     }

@@ -21,6 +21,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -42,7 +45,8 @@ fun ConnectScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     // 扫码配对：页内弹层（不走路由），扫到二维码回填地址并尝试自动连接
-    var scanning by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    // 修复依据(run 39017131812):fully-qualified remember 配 by 委托无法解析 getValue/setValue,改用正常 import
+    var scanning by remember { mutableStateOf(false) }
     if (scanning) {
         QrScanScreen(
             onClose = { scanning = false },
