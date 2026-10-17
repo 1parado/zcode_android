@@ -107,13 +107,11 @@ class ZcodeConnection(
     /** 认证后携带 cookie 的 HTTP url 构造（server-info 等少量 REST 调用用）。 */
     suspend fun authorizedHttpGet(baseUrl: String, path: String, token: String?): JsonObject? =
         withContext(Dispatchers.IO) {
-            val url = baseUrl.toHttpUrl().resolve(path)  // path 形如 /api/server-info
-                // 修复依据：HttpUrl.resolve 对非法 path 返回 null，编译器要求可空处理
-                ?: return@withContext null
-                .newBuilder()
-                .apply {
-                    if (token != null) addQueryParameter(TOKEN_QUERY, token)
-                }.build()
+            // 修复依据：HttpUrl.resolve 对非法 path 返回 null，须先判空再接链式构造
+            val resolved = baseUrl.toHttpUrl().resolve(path) ?: return@withContext null
+            val url = resolved.newBuilder().apply {
+                if (token != null) addQueryParameter(TOKEN_QUERY, token)
+            }.build()
             try {
                 client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
                     if (!resp.isSuccessful) {
