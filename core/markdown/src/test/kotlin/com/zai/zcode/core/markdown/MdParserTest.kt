@@ -110,4 +110,87 @@ class MdParserTest {
         val toks = MdCodeHighlighter.tokenize("some unknown words", "brainfuck")
         assertTrue(toks.all { it.tok == MdCodeHighlighter.Tok.PLAIN })
     }
+
+    // ── 增量解析（v0.2.16）──
+
+    /**
+     * 增量解析的等价性：对同一段流式文本按 chunk 逐步喂入，每一步的结果必须与
+     * 全量 `MdParser.parse(text, isStreaming=true)` 逐块相等。这是「只解析尾部」
+     * 优化不引入偏斜的唯一硬保证，用多种块形态 × 多种切分粒度交叉验证。
+     */
+    @Test
+    fun `incremental parse equals full parse for every chunking`() {
+        val samples = listOf(
+            "普通段落一直写到结尾。",
+            "## 标题\n段落一\n\n段落二",
+            "前文\n```kotlin\nfun a() {}\n```\n后文",
+            "- 甲\n- 乙\n1. 丙\n2. 丁",
+            "| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |",
+            "> 引用一\n> 引用二\n\n收尾段落",
+            "\$\$\nE=mc^2\n\$\$\n结束",
+            "---\n甲\n\n---\n乙",
+        )
+        for (sample in samples) {
+            for (chunk in listOf(1, 2, 3, 7, 1000)) {
+                val parser = MdStreamParser()
+                var last: List<MdBlock> = emptyList()
+                var i = 0
+                while (i < sample.length) {
+                    val end = minOf(sample.length, i + chunk)
+                    val text = sample.substring(0, end)
+                    parser.parse(text, isStreaming = true)
+                    last = parser.blocks
+                    val expected = MdParser.parse(text, isStreaming = true)
+                    assertEquals("sample=$sample chunk=$chunk at=$end", expected, last)
+                    i = end
+                }
+                assertEquals(MdParser.parse(sample, isStreaming = true), last)
+            }
+        }
+    }
+
+    @Test
+    fun `incremental reuses settled prefix instances`() {
+        // 修复依据（v0.2.16）：前缀块必须是**同一批对象实例**，Compose 才能靠
+        // equals/引用相等跳过未变化块的重组；每次都新建就失去了缓存意义。
+        val parser = MdStreamParser()
+        parser.parse("甲\n\n乙\n\n丙", isStreaming = false)
+        val before = parser.blocks
+        val settled = parser.settledBlockCount
+        assertTrue("应有已定稿前缀", settled >= 2)
+
+        parser.parse("甲\n\n乙\n\n丙丁", isStreaming = false)
+        val after = parser.blocks
+        for (i in 0 until settled) {
+            assertTrue("块 $i 应复用同一实例", before[i] === after[i])
+        }
+    }
+
+    @Test
+    fun `non append reset produces same result as fresh parser`() {
+        // 文本被替换（不是追加）时必须退化为整篇重解析，结果仍与全量一致
+        val parser = MdStreamParser()
+        parser.parse("第一段\n\n第二段", isStreaming = false)
+        val replaced = "完全不同的内容\n\n另一段"
+        parser.parse(replaced, isStreaming = false)
+        val got = parser.blocks
+        assertEquals(MdParser.parse(replaced, isStreaming = false), got)
+    }
+
+    @Test
+    fun `settled prefix grows as text arrives`() {
+        // 长文流式：定稿前缀随文本增长单调前进 → 每帧解析量与尾部长度成正比，而非全文
+        val parser = MdStreamParser()
+        var prev = 0
+        val sb = StringBuilder()
+        repeat(40) { round ->
+            sb.append("第 ").append(round).append(" 段文字。\n\n")
+            parser.parse(sb.toString(), isStreaming = true)
+            val settled = parser.settledBlockCount
+            assertTrue("定稿块数不应倒退: $settled < $prev", settled >= prev)
+            prev = settled
+        }
+        assertTrue("长文应累积出大量定稿块，实测 $prev", prev >= 30)
+        assertEquals(MdParser.parse(sb.toString(), isStreaming = true), parser.blocks)
+    }
 }
