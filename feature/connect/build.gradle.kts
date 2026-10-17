@@ -46,5 +46,9 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
     implementation(libs.mlkit.barcode.scanning)
+    // 修复 CI Unresolved：ConnectionSettingsStore 用 DataStore 存连接设置，
+    // SecureTokenStore 用 EncryptedSharedPreferences 加密保存 token，缺依赖导致编译失败
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.security.crypto)
     testImplementation(libs.junit)
 }

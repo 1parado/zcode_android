@@ -33,6 +33,9 @@ dependencies {
     implementation(project(":core:network"))
     implementation(project(":core:protocol"))
     implementation(project(":core:design"))
+    // 修复 CI Unresolved：SessionsScreen 复用 connect 模块的 stateLabel（连接状态中文标签），
+    // connect 不依赖 sessions，此方向无环
+    implementation(project(":feature:connect"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
