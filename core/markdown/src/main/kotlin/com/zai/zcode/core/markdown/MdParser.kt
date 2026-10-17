@@ -111,6 +111,10 @@ object MdParser {
                     while (j < n) {
                         val t = lines[j].trim()
                         if (!isListItem(t)) break
+                        // 修复依据(run 39020330064 CI):有序与无序是两个列表块,
+                        // 遇到 ordered 属性变化要断开,不能全部并入同一个 ListBlock
+                        val isOrdered = t.length > 1 && t[0].isDigit()
+                        if (items.isNotEmpty() && isOrdered != ordered) break
                         val content = stripListMarker(t)
                         val sub = ArrayList<String>()
                         var k = j + 1
