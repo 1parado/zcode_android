@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -146,7 +147,22 @@ class ChannelClient(
             if (channelName != null) add(JsonPrimitive(channelName))
             if (name != null) add(JsonPrimitive(name))
         }
-        val body = RpcSerialization.serializeTwoSegments(header, args)
+        // 修复依据(真机日志 18:25 zod"path:[], expected object, received undefined"):
+        // TS proxy-channel 约定 channel.call(propKey, [args...])——wire body 段是参数
+        // 数组,服务端 target.apply(handler, args) 按位置展开。原实现把 args 当单个
+        // 值序列化,桌面解包后 args[0]=undefined,initializeConversationV4 的
+        // clientHelloSchema.parse(undefined) 必然报错。null 对应 TS 无参调用 args=[]。
+        val wireArgs = buildJsonArray {
+            when (args) {
+                null -> Unit
+                is JsonArray -> args.forEach { add(it) }
+                is JsonElement -> add(args)
+                else -> throw RpcSerialization.BadDataException(
+                    "send: unsupported args ${args::class.simpleName}"
+                )
+            }
+        }
+        val body = RpcSerialization.serializeTwoSegments(header, wireArgs)
         val frame = encodeRpcMessage(
             RpcProtocol.MSG_REGULAR,
             id,
