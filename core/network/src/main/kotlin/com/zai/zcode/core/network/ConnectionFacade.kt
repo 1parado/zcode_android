@@ -9,7 +9,7 @@ import javax.inject.Singleton
  * 避免这些 feature 反向依赖 connect（并与之构成模块环）。
  */
 @Singleton
-class ConnectionFacade @Inject constructor(holder: ConnectionHolder) {
+class ConnectionFacade @Inject constructor(private val holder: ConnectionHolder) {
     val connection: ZcodeConnection get() = holder.connection
 }
 
