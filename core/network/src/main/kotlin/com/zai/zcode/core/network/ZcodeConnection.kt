@@ -394,7 +394,13 @@ class ZcodeConnection(
         scope.launch {
             transport.messages.collect { body -> wsChannel.onMessageRaw(body) }
         }
-        wsChannel.onSend = { frame -> transport.sendMessage(frame) }
+        // 修复依据(真机日志 18:02"channel initialized 后 hello 15s 无响应"):bridge
+        // 值流的逻辑消息是两段序列化的 body(header数组+args),不含 13 字节 IPC 物理帧头
+        // (下行已验证:handleRegular 直接 deserializeTwoSegments 成功)。上行原样发送
+        // encodeRpcMessage 产物(含帧头),桌面解不出→请求全部无响应。须剥离帧头只发 body。
+        wsChannel.onSend = { frame ->
+            transport.sendMessage(frame.copyOfRange(com.zai.zcode.core.protocol.rpc.RpcProtocol.HEADER_LENGTH, frame.size))
+        }
 
         // 等桌面侧 Initialize（值流 Initialize 帧）到达 IDLE
         withTimeout(WS_IDLE_TIMEOUT_MS) { wsChannel.state.first { it == ChannelClient.State.IDLE } }
