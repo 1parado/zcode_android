@@ -2,6 +2,7 @@ package com.zai.zcode.feature.sessions
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.rpc.asIntOrNull
 import com.zai.zcode.core.protocol.v4.SessionSummaryView
 import com.zai.zcode.core.protocol.v4.SessionsIndexReducer
 import com.zai.zcode.core.protocol.v4.TopicFrame
@@ -32,11 +33,51 @@ class SessionsRepository(
         val ended: Boolean,
         val lastActivityAt: Long?,
         val preview: String?,
-    )
+        // Phase B 扩展（docs/ui-design.md §5.2 任务卡状态）
+        val createdAt: Long? = null,
+        /** 待决审批数（pendingInteractionSummary.permissionCount）。 */
+        val permissionCount: Int = 0,
+        /** 待决用户输入数（pendingInteractionSummary.userInputCount）。 */
+        val userInputCount: Int = 0,
+        /** 有后台工作（后台 bash / 工作流运行）。 */
+        val hasBackgroundWork: Boolean = false,
+        // 本地事实（SessionLocalStateStore 注入）
+        val pinned: Boolean = false,
+        /** 未读：lastActivityAt > 本地 lastSeenActivityAt。 */
+        val unread: Boolean = false,
+    ) {
+        val hasPendingInteraction: Boolean get() = permissionCount + userInputCount > 0
+    }
 
     private val reducer = SessionsIndexReducer()
+    // 本地 pinned/seen 注入后的合并视图（wire 列表 + 本地状态）
     private val _sessions = MutableStateFlow<List<SessionItem>>(emptyList())
     val sessions: StateFlow<List<SessionItem>> = _sessions.asStateFlow()
+
+    /** ViewModel 接线本地状态源（手工 DI：SessionsRepository 由 VM 手工构造）。 */
+    fun attachLocalState(store: SessionLocalStateStore, scope: CoroutineScope) {
+        localStoreRef = store
+        scope.launch {
+            store.states.collect { locals ->
+                localStates = locals
+                republish()
+            }
+        }
+    }
+
+    @Volatile private var localStoreRef: SessionLocalStateStore? = null
+    @Volatile private var localStates: Map<String, SessionLocalStateStore.LocalState> = emptyMap()
+
+    /** 打开会话：记录已读水位（未读蓝点消除）。 */
+    suspend fun markSeen(sessionId: String) {
+        val activity = _sessions.value.firstOrNull { it.sessionId == sessionId }?.lastActivityAt ?: return
+        localStoreRef?.markSeen(sessionId, activity)
+    }
+
+    /** 置顶/取消置顶。 */
+    suspend fun setPinned(sessionId: String, pinned: Boolean) {
+        localStoreRef?.setPinned(sessionId, pinned)
+    }
 
     private val _workspacePath = MutableStateFlow<String?>(null)
     val workspacePath: StateFlow<String?> = _workspacePath.asStateFlow()
@@ -100,17 +141,36 @@ class SessionsRepository(
     }
 
     private fun publish() {
+        republish()
+    }
+
+    /** wire 快照 + 本地 pinned/seen 合并重发布（两源各自到达时都触发）。 */
+    private fun republish() {
         val st = reducer.snapshot()
         _sessions.value = st.sessions.mapNotNull { raw ->
             val v = SessionSummaryView(raw)
             val id = v.sessionId ?: return@mapNotNull null
+            // pendingInteractionSummary：wire 上 optional（旧 CLI 缺席 → 降级为 0）
+            val summary = v.pendingInteractionSummary
+            val permission = summary?.get("permissionCount").asIntOrNull() ?: 0
+            val userInput = summary?.get("userInputCount").asIntOrNull() ?: 0
+            val local = localStates[id]
+            val activity = v.lastActivityAt
             SessionItem(
                 sessionId = id,
                 title = v.title?.takeIf { it.isNotBlank() } ?: "未命名会话",
                 phase = v.phase,
                 ended = v.sessionEnded,
-                lastActivityAt = v.lastActivityAt,
+                lastActivityAt = activity,
                 preview = v.lastAssistantPreview,
+                createdAt = v.createdAt,
+                permissionCount = permission,
+                userInputCount = userInput,
+                hasBackgroundWork = v.hasBackgroundWork,
+                pinned = local?.pinned == true,
+                // 未读派生（spec §会话列表）：lastActivityAt > 本地已读水位；
+                // 无已读记录视为未读（首次见到即未读）
+                unread = activity != null && activity > (local?.lastSeenActivityAt ?: 0L),
             )
         }.sortedByDescending { it.lastActivityAt ?: 0L }
     }

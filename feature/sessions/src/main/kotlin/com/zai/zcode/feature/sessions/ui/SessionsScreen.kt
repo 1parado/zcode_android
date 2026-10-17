@@ -12,34 +12,44 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Badge
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.core.design.ZcodeShape
+import com.zai.zcode.core.design.ZcodeSpacing
+import com.zai.zcode.core.design.ZcodeType
+import com.zai.zcode.core.design.components.DeviceChip
+import com.zai.zcode.core.design.components.EmptyState
+import com.zai.zcode.core.design.components.FilterChip
+import com.zai.zcode.core.design.components.ZcodeStatus
+import com.zai.zcode.core.design.components.StatusPill
 import com.zai.zcode.feature.connect.ui.stateLabel
+import com.zai.zcode.feature.sessions.SessionsOrdering
 import com.zai.zcode.feature.sessions.SessionsRepository
 import com.zai.zcode.feature.sessions.SessionsViewModel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.zai.zcode.feature.sessions.SessionFilter
+import java.time.LocalDate
+import java.time.ZoneId
 
 /**
- * 会话列表页：顶栏连接状态 + LazyColumn 列表。
- * 列表来自 sessions-index 订阅的归约快照；空态给引导文案。
+ * 任务 Home（docs/ui-design.md Phase B）：设备 Chip + 筛选行 + 分组任务卡列表。
+ * 列表来自 sessions-index 订阅 + 本地 pinned/seen 合并；空态给引导文案。
  */
 @Composable
 fun SessionsScreen(
@@ -49,40 +59,51 @@ fun SessionsScreen(
 ) {
     val sessions by viewModel.sessions.collectAsState()
     val connState by viewModel.connectionState.collectAsState()
-    // 修复依据(用户报"应该支持在 Android 上进行会话创建"):空态文案原来写死"去电脑端
-    // 创建",顶部也一直没有创建入口。此处接 ViewModel.createSession,创建成功直接进会话。
-    // 修复依据(CI run 39027700956):creating/createError 是 mutableStateOf 委托属性,
-    // 不是 Flow,不能 collectAsState——直接读即可获得 Compose 快照订阅。
+    val filter = viewModel.filter
     val creating = viewModel.creating
     val createError = viewModel.createError
+    val zc = LocalZcodeColors.current
 
     Column(Modifier.fillMaxSize()) {
+        // 顶栏：标题 + 设备 Chip + 设置
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("会话", style = MaterialTheme.typography.titleLarge)
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("任务", style = ZcodeType.uiXl, color = zc.text)
+                Spacer(Modifier.height(2.dp))
                 Text(
                     stateLabel(connState),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = ZcodeType.uiXs,
+                    color = if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
+                        zc.textTertiary
+                    } else {
+                        zc.attention
+                    },
                 )
-                Spacer(Modifier.size(8.dp))
-                CreateSessionButton(
-                    enabled = connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready && !creating,
-                    creating = creating,
-                    onClick = { viewModel.createSession(onOpenSession) },
-                )
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    "设置",
-                    modifier = Modifier.clickable(onClick = onOpenSettings),
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            }
+            DeviceChip("这台电脑")
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = zc.textSecondary)
+            }
+        }
+
+        // 筛选行：全部 / 需要你 / 运行中
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = ZcodeSpacing.screenPadding),
+            horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+        ) {
+            SessionFilter.entries.forEach { f ->
+                FilterChip(label = f.label, selected = filter == f, onClick = { viewModel.setFilter(f) })
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { viewModel.createSession(onOpenSession) }) {
+                Icon(Icons.Rounded.Add, contentDescription = "新建会话", tint = zc.text)
             }
         }
 
@@ -92,117 +113,66 @@ fun SessionsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = viewModel::dismissCreateError)
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                    .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm),
+                style = ZcodeType.uiXs,
+                color = zc.error,
             )
         }
 
         if (sessions.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
-                            "暂无会话"
-                        } else {
-                            "等待连接…"
+                if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
+                    EmptyState(
+                        title = "暂无任务",
+                        description = "创建一个新会话开始",
+                        action = {
+                            TextButton(onClick = { viewModel.createSession(onOpenSession) }) {
+                                Text(if (creating) "创建中…" else "新会话")
+                            }
                         },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready) {
-                        Spacer(Modifier.height(12.dp))
-                        CreateSessionButton(
-                            enabled = !creating,
-                            creating = creating,
-                            onClick = { viewModel.createSession(onOpenSession) },
+                } else {
+                    EmptyState(title = "等待连接…", description = "连接到电脑后这里会显示任务")
+                }
+            }
+        } else {
+            val nowEpochDay = LocalDate.now().toEpochDay()
+            val sections = SessionsOrdering.groupByRecency(sessions, { it }, nowEpochDay)
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = ZcodeSpacing.screenPadding,
+                    vertical = ZcodeSpacing.md,
+                ),
+                verticalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+            ) {
+                sections.forEach { section ->
+                    item(key = "header_${section.title}", contentType = "sectionHeader") {
+                        Text(
+                            section.title,
+                            style = ZcodeType.uiXs,
+                            color = zc.textTertiary,
+                            modifier = Modifier.padding(vertical = ZcodeSpacing.xs),
+                        )
+                    }
+                    items(
+                        section.items.size,
+                        key = { i -> section.items[i].sessionId },
+                        contentType = { "taskCard" },
+                    ) { i ->
+                        val item = section.items[i]
+                        TaskCard(
+                            item = item,
+                            relativeTime = SessionsOrdering.relativeTime(item.lastActivityAt),
+                            absoluteTime = item.lastActivityAt?.let { formatAbsoluteTime(it) },
+                            onClick = {
+                                viewModel.markSeen(item.sessionId)
+                                onOpenSession(item.sessionId)
+                            },
                         )
                     }
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(sessions, key = { it.sessionId }) { item ->
-                    SessionCard(item = item, onClick = { onOpenSession(item.sessionId) })
-                }
-            }
         }
     }
-}
-
-@Composable
-private fun CreateSessionButton(enabled: Boolean, creating: Boolean, onClick: () -> Unit) {
-    androidx.compose.material3.TextButton(onClick = onClick, enabled = enabled) {
-        Text(if (creating) "创建中…" else "+ 新会话")
-    }
-}
-
-@Composable
-private fun SessionCard(item: SessionsRepository.SessionItem, onClick: () -> Unit) {
-    Card(
-        shape = ZcodeShape.card,
-        onClick = onClick,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    item.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (item.phase != null && !item.ended) {
-                    PhaseDot(item.phase)
-                }
-            }
-            item.preview?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            item.lastActivityAt?.let {
-                Text(
-                    TIME_FMT.get().format(Date(it)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
-            }
-        }
-    }
-}
-
-/** phase → 状态圆点（运行中绿色、其余灰）。
- * 修复依据（P3，评审 2026-10-17）：phase 是封闭枚举（draft/prewarming/running/
- * completedSuccess/completedInterrupted/error），不做魔法子串匹配。 */
-@Composable
-private fun PhaseDot(phase: String) {
-    val color = when (phase) {
-        "draft", "prewarming", "running" -> com.zai.zcode.core.design.LocalZcodeColors.current.running
-        else -> MaterialTheme.colorScheme.outline
-    }
-    Box(
-        Modifier
-            .size(8.dp)
-            .background(color, CircleShape)
-    )
-}
-
-private val TIME_FMT = ThreadLocal.withInitial {
-    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 }

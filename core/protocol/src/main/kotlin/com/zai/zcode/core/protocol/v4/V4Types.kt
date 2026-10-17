@@ -419,6 +419,9 @@ class SessionSummaryView(val raw: JsonObject) {
     val lastActivityAt: Long? get() = raw["lastActivityAt"].asLongOrNull()
     val lastAssistantPreview: String? get() = raw["lastAssistantPreview"].asStringOrNull()
     val pendingInteractionSummary: JsonObject? get() = raw["pendingInteractionSummary"].asObjectOrNull()
+    // Phase B（docs/ui-design.md）：wire optional 字段投影，旧 CLI 缺席 → 降级值
+    val hasBackgroundWork: Boolean get() = raw["hasBackgroundWork"] == JsonPrimitive(true)
+    val createdAt: Long? get() = raw["createdAt"].asLongOrNull()
 }
 
 /** sessions-index delta（op 集合封闭：session.upserted / session.removed）。 */
