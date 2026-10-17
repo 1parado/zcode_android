@@ -67,6 +67,7 @@ class ChannelClientTest {
         client.listenEvent("zcode-agent", "onConversationFrameV4")
         val fired = kotlinx.coroutines.CompletableDeferred<ChannelClient.EventFireData>()
         val job = launch { client.events.first { it.channelName == "zcode-agent" }.let { fired.complete(it) } }
+        kotlinx.coroutines.yield()
 
         client.onMessage(
             RpcMessage(
@@ -79,7 +80,6 @@ class ChannelClientTest {
                 ),
             ),
         )
-        kotlinx.coroutines.yield()
         val event = withTimeout(5_000) { fired.await() }
         assertEquals("onX", event.event)
         job.cancel()
