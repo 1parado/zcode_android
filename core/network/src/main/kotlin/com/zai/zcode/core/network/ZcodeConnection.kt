@@ -208,7 +208,7 @@ class ZcodeConnection(
                 // 修复依据(run 39020514047 CI):relayRequest 的尾随 lambda 会绑定到
                 // 最后一个参数 timeoutMs(Long),matcher 必须用命名参数显式传递
                 val boot = relayRequest(bootRequest, match = { p, sent ->
-                    zcodeType(p) == "bootstrap-response" &&
+                    p.zcodeType() == "bootstrap-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull ==
                             sent["requestId"]?.jsonPrimitive?.contentOrNull
                 })
@@ -277,7 +277,7 @@ class ZcodeConnection(
     )
 
     private suspend fun handleRelayPayload(payload: JsonObject) {
-        when (val t = zcodeType(payload)) {
+        when (val t = payload.zcodeType()) {
             "rpc-frame", "rpc-frame-ack" -> {
                 frameTransport?.acceptPayload(payload)
                     ?: ZLog.w(TAG, "rpc-frame before bridge ready, dropped")
@@ -362,11 +362,11 @@ class ZcodeConnection(
             put("workspaceKey", workspace.path)
             recoveryId?.let { put("recoveryId", it) }
         }, match = { p, sent ->
-            (zcodeType(p) == "workspace-bridge-ready" || zcodeType(p) == "workspace-bridge-error") &&
+            (p.zcodeType() == "workspace-bridge-ready" || p.zcodeType() == "workspace-bridge-error") &&
                 p["bridgeSessionId"]?.jsonPrimitive?.contentOrNull ==
                     sent["bridgeSessionId"]?.jsonPrimitive?.contentOrNull
         })
-        if (zcodeType(res) == "workspace-bridge-error") {
+        if (res.zcodeType() == "workspace-bridge-error") {
             throw IllegalStateException("workspace-bridge-error: ${res["error"]?.jsonPrimitive?.contentOrNull}")
         }
         val bridge = res["bridge"] as? JsonObject ?: buildJsonObject { }
@@ -432,7 +432,7 @@ class ZcodeConnection(
                     put("requestId", "wr-" + newRequestId())
                     put("workspaceKey", ws0.path)
                 }, match = { p, sent ->
-                    zcodeType(p) == "workspace-reconnect-response" &&
+                    p.zcodeType() == "workspace-reconnect-response" &&
                         p["requestId"]?.jsonPrimitive?.contentOrNull == sent["requestId"]?.jsonPrimitive?.contentOrNull
                 })
                 if ((res["success"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "true") {
