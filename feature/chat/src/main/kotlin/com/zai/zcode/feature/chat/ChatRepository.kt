@@ -41,8 +41,8 @@ class ChatRepository(
         val rows: List<ChatRow> = emptyList(),
         val revision: Long? = null,
         val phase: String? = null,
-        /** phase 是封闭枚举（sessionPhaseSchema：draft/prewarming/running/completed*/error），
-         *  UI 运行态判定不猜子串（评审 P3）。 */
+        /** phase 是封闭枚举（sessionPhaseSchema：draft、prewarming、running、
+         *  completedSuccess、completedInterrupted、error），UI 运行态判定不猜子串（评审 P3）。 */
         val isRunning: Boolean = false,
     )
 
