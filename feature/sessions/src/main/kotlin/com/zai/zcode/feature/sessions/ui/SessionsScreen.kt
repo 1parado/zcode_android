@@ -12,17 +12,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -47,8 +44,6 @@ import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.DeviceChip
 import com.zai.zcode.core.design.components.EmptyState
 import com.zai.zcode.core.design.components.FilterChip
-import com.zai.zcode.core.design.components.ZcodeStatus
-import com.zai.zcode.core.design.components.StatusPill
 import com.zai.zcode.feature.connect.ui.stateLabel
 import com.zai.zcode.feature.sessions.SessionsOrdering
 import com.zai.zcode.feature.sessions.SessionsRepository
@@ -56,7 +51,6 @@ import com.zai.zcode.feature.sessions.SessionsViewModel
 import com.zai.zcode.feature.sessions.SessionFilter
 import com.zai.zcode.feature.sessions.SessionsListState
 import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * 任务 Home（docs/ui-design.md Phase B）：设备 Chip + 筛选行 + 分组任务卡列表。
