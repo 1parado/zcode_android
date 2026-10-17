@@ -212,11 +212,15 @@ class ConversationReducerTest {
         val reducer = ConversationReducer()
         val topic = "conversation/s1"
         reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 10, buildJsonObject { put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement("[]")) }))!!)
-        // toSeq <= seq 的帧丢弃
-        assertFalse(reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 10, buildJsonObject {
+        // 修复依据(真机 v0.2.11 永挂加载):snapshot 改为整表替换永远施加(重复同帧
+        // 幂等,不丢),旧帧判定只作用于 deltas——与 TS conversationProjectionStore 对齐。
+        assertTrue(reducer.apply(TopicFrame.fromJson(snapshotFrame(topic, 10, buildJsonObject {
             put("rows", com.zai.zcode.core.common.AppJson.parseToJsonElement("""[{"rowId":9,"kind":"userInput"}]"""))
         }))!!))
-        assertEquals(0, reducer.snapshot("s1").rows.size)
+        assertEquals(1, reducer.snapshot("s1").rows.size)
+        // stale delta(toSeq <= seq)仍被丢弃
+        assertFalse(reducer.apply(deltaFrame(topic, 10, 10, """[{"op":"row.appended","row":{"rowId":1,"kind":"userInput","text":"x"}}]""")))
+        assertEquals(1, reducer.snapshot("s1").rows.size)
     }
 
     @Test
