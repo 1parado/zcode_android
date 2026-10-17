@@ -38,7 +38,7 @@ object ConnectModule {
         // 说明：连接握手的 clientId 与命令信封 clientId 必须同源（initializeConversationV4
         // 绑定后不一致会被 fault.command.clientMismatch 拒绝），故统一由 ClientIdProvider 提供。
         clientIdProvider.clientId,
-        appVersion = "0.1.0",
+        appVersion = "0.2.0",
     )
 
     @Provides
