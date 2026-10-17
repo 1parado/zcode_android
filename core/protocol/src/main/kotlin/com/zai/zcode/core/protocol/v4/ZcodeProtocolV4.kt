@@ -64,7 +64,7 @@ class ZcodeProtocolV4(
     /**
      * attachFrameListener 绑定的 workspaceIdentity。
      * 修复依据(真机 v0.2.13"订阅 ACK 成功但零帧"):事件监听(attachFrameListener)带了
-     * workspaceIdentity,而 subscribe*/sendCommand 由上层 Repository 调用时没带,
+     * workspaceIdentity,而 subscribe 与 sendCommand 由上层 Repository 调用时没带,
      * 两端 workspaceKey 推导不一致(identity.trim()||path vs 纯 path)→ 订阅登记在
      * A key、帧监听挂在 B key,routedEvent 的 routedEventKey 对不上,帧永不 fan-out。
      * AGENTS.md 铁律:远程链路必须贯穿传递 workspaceIdentity。此处让门面记住 attach

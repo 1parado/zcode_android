@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
@@ -19,7 +20,7 @@ import org.junit.Test
  * workspaceIdentity 贯穿传递回归。
  *
  * 修复依据（真机 v0.2.13「订阅 ACK 成功，但会话列表零内容 / 创建会话失败」）：
- * 事件监听 attachFrameListener 带 workspaceIdentity，而 subscribe*/sendCommand 由上层
+ * 事件监听 attachFrameListener 带 workspaceIdentity，而 subscribe 与 sendCommand 由上层
  * Repository 调用时不带 —— 服务端 workspaceKey 归一为 `identity.trim() || path`，
  * 于是订阅登记在 identity key、帧监听挂在 path key，connectionScope 的 routedEventKey
  * 对不上，帧永不 fan-out（ACK 能到、零帧）。AGENTS.md：远程链路必须贯穿传递。
