@@ -155,6 +155,25 @@ fun ChatScreen(
                 onRetry = viewModel::retrySubscribe,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
+            // 上下文用量条（usage.contextWindow）：>80% 变琥珀提醒，>95% 变红。
+            ui.contextUsage?.let { ratio ->
+                ContextUsageBar(ratio)
+            }
+            // 子代理进度卡（state.subagents.running）：并行任务可见。
+            if (ui.subagents.isNotEmpty()) {
+                SubagentsCard(ui.subagents, ui.subagentsEnded)
+            }
+            // 队列卡（state.queue.items）：人不在电脑前的排队指令，可删/移到队尾。
+            if (ui.queue.isNotEmpty()) {
+                QueueCard(
+                    items = ui.queue,
+                    autoDrain = ui.queueAutoDrain,
+                    onEdit = viewModel::editQueueItem,
+                    onMoveToEnd = viewModel::moveQueueItemToEnd,
+                    onDelete = viewModel::deleteQueueItem,
+                    onToggleAutoDrain = viewModel::setAutoDrain,
+                )
+            }
             // 审批 Dock 挂在输入栏上方：命令卡住时用户视线本来就在底部，
             // 而且它与「正在输入什么」是同一块注意力区域，不该分开放。
             ApprovalDock(
@@ -661,5 +680,214 @@ private fun ConfigChip(
             modifier = Modifier.size(12.dp),
             tint = zc.textTertiary,
         )
+    }
+}
+
+// ── 上下文用量条 / 子代理进度卡 / 队列卡 ──
+
+/**
+ * 上下文窗口用量条（usage.contextWindow / autoCompactThresholdTokens）。
+ * 阈值配色：<80% 静默（tertiary），80-95% 琥珀（attention），>95% 红（error）——
+ * 快满时提醒但不打扰：一行 4dp 细条 + 百分比，不放卡片。
+ */
+@Composable
+private fun ContextUsageBar(ratio: Float) {
+    val zc = LocalZcodeColors.current
+    val color = when {
+        ratio > 0.95f -> zc.error
+        ratio > 0.80f -> zc.attention
+        else -> zc.textTertiary
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ZcodeSpacing.screenPadding, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .weight(1f)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(zc.input),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(ratio)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(color),
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "上下文 ${(ratio * 100).toInt()}%",
+            style = ZcodeType.uiXs,
+            color = color,
+        )
+    }
+}
+
+/**
+ * 子代理进度卡（state.subagents.running）：可折叠，默认收起为一行摘要——
+ * 并行任务多时全展开会淹没对话流。
+ */
+@Composable
+private fun SubagentsCard(subagents: List<ChatRepository.SubagentSummary>, endedTotal: Int) {
+    val zc = LocalZcodeColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ZcodeSpacing.screenPadding, vertical = 2.dp)
+            .clip(ZcodeShape.inner)
+            .background(zc.card)
+            .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LiveDot(
+                if (subagents.any { it.status == "running" }) ZcodeStatus.Running else ZcodeStatus.Queued,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "${subagents.size} 个子代理运行中" + if (endedTotal > 0) " · 已完成 $endedTotal" else "",
+                style = ZcodeType.uiSm,
+                color = zc.text,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                Icons.Rounded.ExpandMore,
+                contentDescription = if (expanded) "收起" else "展开",
+                modifier = Modifier.size(16.dp),
+                tint = zc.textTertiary,
+            )
+        }
+        if (expanded) {
+            subagents.forEach { sub ->
+                Row(
+                    Modifier.fillMaxWidth().padding(top = ZcodeSpacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        when (sub.status) {
+                            "blocked" -> "⛔"
+                            "waiting" -> "⏸"
+                            else -> "▶"
+                        },
+                        style = ZcodeType.uiXs,
+                        color = zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            sub.title,
+                            style = ZcodeType.uiSm,
+                            color = zc.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        sub.summary?.let {
+                            Text(
+                                it,
+                                style = ZcodeType.uiXs,
+                                color = zc.textTertiary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 队列卡（state.queue.items）：排队消息列表，每条可编辑/移到队尾/删除，
+ * 顶部显示 autoDrain 状态与切换（停止后队列暂停时是恢复入口）。
+ */
+@Composable
+private fun QueueCard(
+    items: List<ChatRepository.QueueItem>,
+    autoDrain: Boolean,
+    onEdit: (String, String) -> Unit,
+    onMoveToEnd: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onToggleAutoDrain: (Boolean) -> Unit,
+) {
+    val zc = LocalZcodeColors.current
+    var editingId by remember { mutableStateOf<String?>(null) }
+    var editText by remember { mutableStateOf("") }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ZcodeSpacing.screenPadding, vertical = 2.dp)
+            .clip(ZcodeShape.inner)
+            .background(zc.card)
+            .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "队列 · ${items.size} 条",
+                style = ZcodeType.uiSm,
+                color = zc.text,
+                modifier = Modifier.weight(1f),
+            )
+            // autoDrain 状态切换：停止后队列暂停，这里一键恢复
+            Text(
+                if (autoDrain) "自动消化中" else "已暂停 · 点恢复",
+                style = ZcodeType.uiXs,
+                color = if (autoDrain) zc.textTertiary else zc.attention,
+                modifier = Modifier.clickable { onToggleAutoDrain(!autoDrain) },
+            )
+        }
+        items.forEach { item ->
+            Column(Modifier.fillMaxWidth().padding(top = ZcodeSpacing.xs)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        item.text,
+                        style = ZcodeType.uiSm,
+                        color = zc.text,
+                        maxLines = if (editingId == item.queueItemId) Int.MAX_VALUE else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        "置底",
+                        style = ZcodeType.uiXs,
+                        color = zc.queued,
+                        modifier = Modifier
+                            .clickable { onMoveToEnd(item.queueItemId) }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                    Text(
+                        "删除",
+                        style = ZcodeType.uiXs,
+                        color = zc.error,
+                        modifier = Modifier
+                            .clickable { onDelete(item.queueItemId) }
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                }
+                if (editingId == item.queueItemId) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = editText,
+                        onValueChange = { editText = it },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                if (editText.isNotBlank()) onEdit(item.queueItemId, editText.trim())
+                                editingId = null
+                            }) {
+                                Icon(Icons.Rounded.Check, "保存", modifier = Modifier.size(18.dp), tint = zc.running)
+                            }
+                        },
+                    )
+                }
+            }
+        }
     }
 }

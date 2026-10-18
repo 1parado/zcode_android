@@ -5,6 +5,7 @@ import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.core.protocol.rpc.PromiseErrorException
 import com.zai.zcode.core.protocol.rpc.asArrayOrNull
 import com.zai.zcode.core.protocol.rpc.asBooleanOrNull
+import com.zai.zcode.core.protocol.rpc.asIntOrNull
 import com.zai.zcode.core.protocol.rpc.asLongOrNull
 import com.zai.zcode.core.protocol.rpc.asObjectOrNull
 import com.zai.zcode.core.protocol.rpc.asStringOrNull
@@ -205,6 +206,25 @@ class ChatRepository(
         val phase: String? = null,
         /** 会话 state 原文（config 投影读 mode/thoughtLevel 用）。 */
         val state: JsonObject? = null,
+        /**
+         * 消息队列（state.queue.items，queueStateSchema）。
+         * 远程操控核心：人不在电脑前时后续指令排队，需要看/改/删。
+         */
+        val queue: List<QueueItem> = emptyList(),
+        /** 队列是否自动消化（false = 停止后暂停，需 setAutoDrain 恢复）。 */
+        val queueAutoDrain: Boolean = true,
+        /**
+         * 运行中的子代理（state.subagents.running，runningSubagentSummarySchema）。
+         * 可折叠进度卡：并行任务时用户需要知道电脑上同时跑着什么。
+         */
+        val subagents: List<SubagentSummary> = emptyList(),
+        /** 子代理累计已结束数（endedTotal）。 */
+        val subagentsEnded: Int = 0,
+        /**
+         * 上下文窗口用量（state.usage.contextWindow，0.0~1.0；null = 快照没带）。
+         * 输入栏上方进度条：快满时提醒（服务端 autoCompactThresholdTokens 换算）。
+         */
+        val contextUsage: Float? = null,
         /** phase 是封闭枚举（sessionPhaseSchema：draft、prewarming、running、
          *  completedSuccess、completedInterrupted、error），UI 运行态判定不猜子串（评审 P3）。 */
         val isRunning: Boolean = false,
@@ -258,6 +278,24 @@ class ChatRepository(
         val label: String,
         /** permission：allowOnce / allowAlways / deny / custom；userInput 为 null。 */
         val kind: String? = null,
+    )
+
+    /** 队列条目（queueItemSchema 投影：kind=sendText 才显示为消息，compact 等维护意图跳过）。 */
+    data class QueueItem(
+        val queueItemId: String,
+        val text: String,
+        /** queued / reserved / promoting。 */
+        val state: String,
+    )
+
+    /** 运行中子代理摘要（runningSubagentSummarySchema 投影）。 */
+    data class SubagentSummary(
+        val childSessionId: String,
+        val subagentType: String,
+        val title: String,
+        val summary: String?,
+        /** running / waiting / blocked。 */
+        val status: String,
     )
 
     private val reducer = com.zai.zcode.core.protocol.v4.ConversationReducer().apply {
@@ -637,6 +675,74 @@ class ChatRepository(
         return switchModel(cur.providerId, cur.modelId, thought)
     }
 
+    // ── 队列管理（editQueueItem / reorderQueueItem / deleteQueueItem / setAutoDrain）──
+    // 对齐 command.ts:210-217。全部是 CAS 命令（COMMANDS_REQUIRING_BASE_REVISION）。
+
+    /** 编辑排队消息文本。 */
+    suspend fun editQueueItem(queueItemId: String, newText: String): Boolean =
+        sendCasCommand("editQueueItem", queueItemId = queueItemId, newText = newText)
+
+    /** 调整排队顺序：移到 beforeQueueItemId 之前；null = 移到队尾。 */
+    suspend fun reorderQueueItem(queueItemId: String, beforeQueueItemId: String?): Boolean =
+        sendCasCommand("reorderQueueItem", queueItemId = queueItemId, beforeQueueItemId = beforeQueueItemId)
+
+    /** 删除排队消息。 */
+    suspend fun deleteQueueItem(queueItemId: String): Boolean =
+        sendCasCommand("deleteQueueItem", queueItemId = queueItemId)
+
+    /** 恢复/暂停队列自动消化。 */
+    suspend fun setAutoDrain(autoDrain: Boolean): Boolean =
+        sendCasCommand("setAutoDrain", autoDrain = autoDrain)
+
+    /** 队列投影：只保留 sendText 消息（compact 等维护意图不进 UI 列表）。 */
+    private fun projectQueue(state: JsonObject?): List<QueueItem> {
+        val items = state?.get("queue")?.asObjectOrNull()
+            ?.get("items").asArrayOrNull() ?: return emptyList()
+        return items.mapNotNull { el ->
+            val o = el.asObjectOrNull() ?: return@mapNotNull null
+            val kind = o["kind"].asStringOrNull() ?: return@mapNotNull null
+            if (kind != "sendText") return@mapNotNull null
+            val id = o["queueItemId"].asStringOrNull() ?: return@mapNotNull null
+            QueueItem(
+                queueItemId = id,
+                text = o["text"].asStringOrNull().orEmpty(),
+                state = o["dispatch"]?.asObjectOrNull()?.get("state").asStringOrNull() ?: "queued",
+            )
+        }
+    }
+
+    /** 子代理投影（runningSubagentSummarySchema）。 */
+    private fun projectSubagents(state: JsonObject?): List<SubagentSummary> {
+        val running = state?.get("subagents")?.asObjectOrNull()
+            ?.get("running").asArrayOrNull() ?: return emptyList()
+        return running.mapNotNull { el ->
+            val o = el.asObjectOrNull() ?: return@mapNotNull null
+            val id = o["childSessionId"].asStringOrNull() ?: return@mapNotNull null
+            SubagentSummary(
+                childSessionId = id,
+                subagentType = o["subagentType"].asStringOrNull() ?: "subagent",
+                title = o["title"].asStringOrNull() ?: "子代理",
+                summary = o["summary"].asStringOrNull(),
+                status = o["status"].asStringOrNull() ?: "running",
+            )
+        }
+    }
+
+    /**
+     * 上下文用量投影：usedTokens / maxTokens（autoCompactThresholdTokens 存在时以它
+     * 为分母——用户关心的是"距自动压缩还有多少"，不是"距硬上限"）。
+     */
+    private fun projectContextUsage(state: JsonObject?): Float? {
+        val cw = state?.get("usage")?.asObjectOrNull()
+            ?.get("contextWindow")?.asObjectOrNull() ?: return null
+        val used = cw["usedTokens"].asLongOrNull() ?: return null
+        val threshold = cw["autoCompactThresholdTokens"].asLongOrNull()
+        val max = cw["maxTokens"].asLongOrNull() ?: return null
+        val denom = if (threshold != null && threshold > 0) threshold else max
+        if (denom <= 0) return null
+        return (used.toFloat() / denom).coerceIn(0f, 1f)
+    }
+
     /**
      * CAS 命令统一发送（对齐官方 zcodeV4HostCommand.sendHostCasCommandV4）：
      * switchModelConfig / switchCollaborationMode 在 COMMANDS_REQUIRING_BASE_REVISION
@@ -649,6 +755,10 @@ class ChatRepository(
         model: String? = null,
         thought: String? = null,
         mode: String? = null,
+        queueItemId: String? = null,
+        newText: String? = null,
+        beforeQueueItemId: String? = null,
+        autoDrain: Boolean? = null,
     ): Boolean {
         val p = connection.protocol.value ?: return false
         return runCatching {
@@ -659,6 +769,11 @@ class ChatRepository(
                     if (model != null) put("model", model)
                     if (thought != null) put("thought", thought)
                     if (mode != null) put("mode", mode)
+                    if (queueItemId != null) put("queueItemId", queueItemId)
+                    if (newText != null) put("newText", newText)
+                    // beforeQueueItemId 是 nullable 语义（null=移到队尾），键必须在场
+                    if (type == "reorderQueueItem") put("beforeQueueItemId", beforeQueueItemId)
+                    if (autoDrain != null) put("autoDrain", autoDrain)
                 }
                 val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
                     commandId = java.util.UUID.randomUUID().toString(),
@@ -775,6 +890,13 @@ class ChatRepository(
             isRunning = st.state?.get("phase").asStringOrNull()
                 ?.let { it == "draft" || it == "prewarming" || it == "running" } == true,
             turnFailed = st.state?.get("phase").asStringOrNull() == "error",
+            queue = projectQueue(st.state),
+            queueAutoDrain = st.state?.get("queue")?.asObjectOrNull()
+                ?.get("autoDrain")?.let { it == kotlinx.serialization.json.JsonPrimitive(true) } ?: true,
+            subagents = projectSubagents(st.state),
+            subagentsEnded = st.state?.get("subagents")?.asObjectOrNull()
+                ?.get("endedTotal").asIntOrNull() ?: 0,
+            contextUsage = projectContextUsage(st.state),
             pendingInteractions = projectPendingInteractions(st.state),
             title = projectTitle(st.state, st.rows),
         )

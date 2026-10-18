@@ -146,6 +146,25 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // ── 队列管理 ──
+
+    fun editQueueItem(queueItemId: String, newText: String) {
+        viewModelScope.launch { repository.editQueueItem(queueItemId, newText) }
+    }
+
+    /** 移到队尾（远程操控最高频的调整：让这条最后跑）。 */
+    fun moveQueueItemToEnd(queueItemId: String) {
+        viewModelScope.launch { repository.reorderQueueItem(queueItemId, null) }
+    }
+
+    fun deleteQueueItem(queueItemId: String) {
+        viewModelScope.launch { repository.deleteQueueItem(queueItemId) }
+    }
+
+    fun setAutoDrain(autoDrain: Boolean) {
+        viewModelScope.launch { repository.setAutoDrain(autoDrain) }
+    }
+
     /**
      * 会话加载态：区分「在等」/「电脑端 runtime 没起来」/「读不出来」。
      * 与 [ui] 分离是因为「零行」有两种截然不同的含义：会话真的还没有内容，
