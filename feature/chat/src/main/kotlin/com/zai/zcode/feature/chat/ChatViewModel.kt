@@ -83,6 +83,55 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // ── 权限模式 + 思考档位（官方 mobile composer 同款四档/推理档）──
+
+    /** 一档协作模式（switchCollaborationMode 的 mode 值 + 中文标签）。 */
+    data class ModeOption(val mode: String, val label: String, val description: String)
+
+    /** 当前协作模式（snapshot config 投影;读不到时 null=未知，UI 显示「默认」）。 */
+    var currentMode by mutableStateOf<String?>(null)
+        private set
+
+    /** 当前思考档位。 */
+    var currentThought by mutableStateOf<String?>(null)
+        private set
+
+    /** 官方四档（zh-CN 标签 + switchCollaborationMode mode 值）。 */
+    val modeOptions = listOf(
+        ModeOption("plan", "计划模式", "编辑前先出计划"),
+        ModeOption("guarded", "变更前确认", "改动前先问我"),
+        ModeOption("yolo", "自主模式", "在有风险时询问"),
+        ModeOption("build", "完全访问", "减少确认次数"),
+    )
+
+    /** 推理档位（zh-CN chat.toolbar.thoughtLevel.value.*）。 */
+    val thoughtOptions = listOf("low", "medium", "high", "xhigh", "max")
+
+    fun thoughtLabel(v: String): String = when (v) {
+        "low" -> "低"; "medium" -> "中"; "high" -> "高"
+        "xhigh" -> "极高"; "max" -> "最高"; else -> v
+    }
+
+    fun modeLabel(v: String?): String =
+        modeOptions.firstOrNull { it.mode == v }?.let { "${it.label} · ${it.description}" }
+            ?: "变更前确认 · 改动前先问我"
+
+    fun switchMode(mode: String) {
+        val previous = currentMode
+        currentMode = mode
+        viewModelScope.launch {
+            if (!repository.switchMode(mode)) currentMode = previous
+        }
+    }
+
+    fun switchThought(thought: String) {
+        val previous = currentThought
+        currentThought = thought
+        viewModelScope.launch {
+            if (!repository.switchThought(thought)) currentThought = previous
+        }
+    }
+
     /**
      * 会话加载态：区分「在等」/「电脑端 runtime 没起来」/「读不出来」。
      * 与 [ui] 分离是因为「零行」有两种截然不同的含义：会话真的还没有内容，

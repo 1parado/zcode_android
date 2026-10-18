@@ -26,6 +26,10 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Policy
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -191,6 +195,9 @@ fun ChatScreen(
                     )
                 }
             }
+            // 权限模式 + 思考档位快捷行（官方 composer toolbar 语义：输入栏上方
+            // 两个下拉 chip，真实作用于电脑端会话）
+            ComposerConfigBar(viewModel = viewModel, onPickModel = { showModelPicker = true })
             ChatComposer(viewModel = viewModel, isRunning = ui.isRunning)
         }
 
@@ -531,4 +538,104 @@ private fun ChatComposer(viewModel: ChatViewModel, isRunning: Boolean) {
         onStop = if (isRunning && viewModel.draft.isBlank()) viewModel::stop else null,
         sendEnabled = viewModel.draft.isNotBlank() && !viewModel.sending,
     )
+}
+
+/**
+ * 输入栏上方的配置行：权限模式 + 思考档位 + 模型入口。
+ *
+ * 对齐官方 mobile composer toolbar（V4ComposerToolbar）：模式下拉（计划模式/
+ * 变更前确认/自主模式/完全访问）、思考档位下拉（低/中/高/极高/最高）、模型入口。
+ * 全部走 v4 命令真实作用于电脑端会话（switchCollaborationMode / switchModelConfig）。
+ */
+@Composable
+private fun ComposerConfigBar(viewModel: ChatViewModel, onPickModel: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    var showModeMenu by remember { mutableStateOf(false) }
+    var showThoughtMenu by remember { mutableStateOf(false) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ZcodeSpacing.md, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 权限模式 chip
+        Box {
+            ConfigChip(
+                icon = Icons.Rounded.Policy,
+                text = viewModel.modeOptions.firstOrNull { it.mode == viewModel.currentMode }?.label
+                    ?: "变更前确认",
+                onClick = { showModeMenu = true },
+            )
+            DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                viewModel.modeOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(option.label, style = ZcodeType.uiSm, color = zc.text)
+                                Text(option.description, style = ZcodeType.uiXs, color = zc.textTertiary)
+                            }
+                        },
+                        leadingIcon = {
+                            if (viewModel.currentMode == option.mode) {
+                                Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = zc.running)
+                            }
+                        },
+                        onClick = {
+                            viewModel.switchMode(option.mode)
+                            showModeMenu = false
+                        },
+                    )
+                }
+            }
+        }
+        // 思考档位 chip
+        Box {
+            ConfigChip(
+                icon = Icons.Rounded.Psychology,
+                text = viewModel.currentThought?.let(viewModel::thoughtLabel) ?: "中",
+                onClick = { showThoughtMenu = true },
+            )
+            DropdownMenu(expanded = showThoughtMenu, onDismissRequest = { showThoughtMenu = false }) {
+                viewModel.thoughtOptions.forEach { level ->
+                    DropdownMenuItem(
+                        text = { Text(viewModel.thoughtLabel(level), style = ZcodeType.uiSm, color = zc.text) },
+                        leadingIcon = {
+                            if (viewModel.currentThought == level) {
+                                Icon(Icons.Rounded.Check, null, Modifier.size(16.dp), tint = zc.running)
+                            }
+                        },
+                        onClick = {
+                            viewModel.switchThought(level)
+                            showThoughtMenu = false
+                        },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        // 模型入口（点击打开 ModelPickerSheet）
+        ConfigChip(
+            icon = Icons.Rounded.Memory,
+            text = viewModel.currentModel?.modelId?.substringBeforeLast("/") ?: "模型",
+            onClick = onPickModel,
+        )
+    }
+}
+
+@Composable
+private fun ConfigChip(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, onClick: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    Row(
+        Modifier
+            .clip(ZcodeShape.control)
+            .background(zc.input)
+            .clickable(onClick = onClick)
+            .padding(horizontal = ZcodeSpacing.sm, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp), tint = zc.textSecondary)
+        Spacer(Modifier.width(4.dp))
+        Text(text, style = ZcodeType.uiXs, color = zc.textSecondary, maxLines = 1)
+    }
 }

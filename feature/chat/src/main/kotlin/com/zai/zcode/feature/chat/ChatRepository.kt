@@ -615,7 +615,7 @@ class ChatRepository(
     }
 
     /** 切换本会话模型（switchModelConfig；thought 沿用官方必填形状，默认 medium）。 */
-    suspend fun switchModel(providerId: String, modelId: String): Boolean {
+    suspend fun switchModel(providerId: String, modelId: String, thought: String = "medium"): Boolean {
         val p = connection.protocol.value ?: return false
         return runCatching {
             val ack = p.switchModel(
@@ -623,6 +623,7 @@ class ChatRepository(
                 sessionId = sessionId,
                 provider = providerId,
                 model = modelId,
+                thought = thought,
                 workspaceIdentity = workspaceIdentity,
             )
             ack.status == "accepted"
@@ -630,6 +631,37 @@ class ChatRepository(
             ZLog.w(TAG, "switchModel failed: ${it.message}")
             false
         }
+    }
+
+    /**
+     * 切换协作模式（switchCollaborationMode）。
+     * 官方四档（zh-CN 文案）：plan=计划模式, guarded=变更前确认, yolo=自主模式, build=完全访问。
+     */
+    suspend fun switchMode(mode: String): Boolean {
+        val p = connection.protocol.value ?: return false
+        return runCatching {
+            val ack = p.switchCollaborationMode(
+                workspacePath = workspacePath,
+                sessionId = sessionId,
+                mode = mode,
+                workspaceIdentity = workspaceIdentity,
+            )
+            ack.status == "accepted"
+        }.getOrElse {
+            ZLog.w(TAG, "switchMode failed: ${it.message}")
+            false
+        }
+    }
+
+    /**
+     * 切换思考档位：复用 switchModelConfig（官方语义：thought 是模型配置的附属，
+     * useDraftConfigControl.handleDraftSelectThought 与 model 一起写回同一命令）。
+     */
+    suspend fun switchThought(thought: String): Boolean {
+        val p = connection.protocol.value ?: return false
+        // 需要当前 provider/model 才能发合法 switchModelConfig（schema 三字段必填）
+        val cur = loadCurrentSelection() ?: return false
+        return switchModel(cur.providerId, cur.modelId, thought)
     }
 
     /** 一个可选模型项（选择器列表行）。 */

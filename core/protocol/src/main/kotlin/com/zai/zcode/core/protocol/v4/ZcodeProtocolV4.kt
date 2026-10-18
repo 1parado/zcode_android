@@ -550,6 +550,27 @@ class ZcodeProtocolV4(
         return sendCommand(workspacePath, envelope, workspaceIdentity, timeoutMs = 30_000)
     }
 
+    /**
+     * 切换协作模式（switchCollaborationMode，command.ts:259）。
+     * mode 值域封闭：build/edit/plan/yolo/guarded——官方 UI 四档映射：
+     * plan=计划模式, guarded=变更前确认, yolo=自主模式, build=完全访问（zh-CN 文案）。
+     */
+    suspend fun switchCollaborationMode(
+        workspacePath: String,
+        sessionId: String?,
+        mode: String,
+        workspaceIdentity: String? = null,
+    ): CommandAck {
+        val envelope = buildCommandEnvelope(
+            commandId = java.util.UUID.randomUUID().toString(),
+            clientId = clientId,
+            sessionId = sessionId,
+            type = "switchCollaborationMode",
+            payload = buildJsonObject { put("mode", mode) },
+        )
+        return sendCommand(workspacePath, envelope, workspaceIdentity, timeoutMs = 30_000)
+    }
+
     /** ModelSelectionView 投影（providerFacadeServices.ts ModelSelectionView 子集）。 */
     class ModelSelectionView(raw: JsonObject) {
         val providers: List<ProviderEntry> =
