@@ -6,10 +6,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.feature.chat.ui.ChatScreen
 import com.zai.zcode.feature.connect.ui.ConnectScreen
 import com.zai.zcode.feature.sessions.ui.SessionsScreen
 import com.zai.zcode.feature.uuremote.ui.UuRemoteScreen
+import com.zai.zcode.ui.SettingsScreen
 
 /** 路由表。sessionId 作为 chat 页参数。 */
 object Routes {
@@ -17,11 +19,12 @@ object Routes {
     const val SESSIONS = "sessions"
     const val CHAT = "chat/{sessionId}"
     const val UU_REMOTE = "uu_remote"
+    const val SETTINGS = "settings"
     fun chat(sessionId: String) = "chat/$sessionId"
 }
 
 @Composable
-fun AppNavHost() {
+fun AppNavHost(connection: ZcodeConnection) {
     val nav = rememberNavController()
     NavHost(navController = nav, startDestination = Routes.CONNECT) {
         composable(Routes.CONNECT) {
@@ -37,9 +40,9 @@ fun AppNavHost() {
         composable(Routes.SESSIONS) {
             SessionsScreen(
                 onOpenSession = { sessionId -> nav.navigate(Routes.chat(sessionId)) },
-                onOpenSettings = {
-                    nav.navigate(Routes.CONNECT) // 设置即重连页
-                },
+                // 设置入口不再跳回连接/授权页：远程操控场景下"设置"是查看本机远控配置，
+                // 跳回 CONNECT 会让用户误以为要重新配对。SETTINGS 是独立页，仅展示信息。
+                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
             )
         }
         composable(
@@ -54,6 +57,13 @@ fun AppNavHost() {
         composable(Routes.UU_REMOTE) {
             UuRemoteScreen(
                 onBack = { nav.popBackStack() },
+            )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                connection = connection,
+                onBack = { nav.popBackStack() },
+                onReconnect = { nav.navigate(Routes.CONNECT) },
             )
         }
     }

@@ -352,6 +352,7 @@ class ChatRepository(
         scope.launch {
             try {
                 // 重连恢复：带上次水位重订阅，服务端按 replayable 补发；无水位则全新快照
+                ZLog.i(TAG, "subscribe request: path=$workspacePath id=$sessionId identity=$workspaceIdentity baseSeq=$lastSeq")
                 val ack = p.subscribeConversation(
                     workspacePath = workspacePath,
                     sessionId = sessionId,
@@ -473,7 +474,9 @@ class ChatRepository(
         // 任何到达的帧都算"有动静"：看门狗只关心静默，不关心是否被 apply（重复旧帧
         // 同样说明链路活着）。
         lastFrameAtMs = System.nanoTime()
-        if (reducer.apply(frame)) publish()
+        val applied = reducer.apply(frame)
+        ZLog.d(TAG, "onFrame topic=${frame.topic} applied=$applied")
+        if (applied) publish()
     }
 
     /**

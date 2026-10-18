@@ -424,6 +424,8 @@ class ZcodeProtocolV4(
             ZLog.w(TAG, "unparseable wire frame (service routing boundary)")
             return
         }
+        // 诊断：wire 帧能否正确重组，以及它属于哪个 topic（conversation/ 还是 sessions-index/）。
+        ZLog.d(TAG, "wire frame topic=${wire.topic} deliveryKind=${wire.deliveryKind}")
         assembler.onWireFrame(wire)
     }
 

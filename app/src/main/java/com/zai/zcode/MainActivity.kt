@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.feature.uuremote.UuRemoteDeepLinkHub
 import com.zai.zcode.ui.AppNavHost
 // 修复：ui.theme 包内是旧壳主题 ZcodemobileTheme；feature 模块统一用 core/design 的
@@ -25,6 +26,9 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var deepLinkHub: UuRemoteDeepLinkHub
 
+    @Inject
+    lateinit var connection: ZcodeConnection
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -32,7 +36,7 @@ class MainActivity : ComponentActivity() {
         forwardDeepLink(intent)
         setContent {
             ZcodeTheme {
-                AppNavHost()
+                AppNavHost(connection = connection)
             }
         }
     }

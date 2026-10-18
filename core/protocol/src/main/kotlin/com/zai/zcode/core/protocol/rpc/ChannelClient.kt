@@ -133,7 +133,14 @@ class ChannelClient(
                 // 事件名允许缺省(第三元素存在才取);V4 层 dispatchLogicalFrame 本就按
                 // frame.topic 前缀区分 conversation/sessions-index,不依赖事件名。
                 val event = (arr.getOrNull(2) as? JsonPrimitive)?.contentOrNull
-                val channelName = eventListeners[id] ?: return
+                val channelName = eventListeners[id]
+                if (channelName == null) {
+                    // 诊断（真机 v0.2.12 同类）：监听 id 未登记→事件被服务端投递到已释放/
+                    // 未注册的监听,帧直接丢失。打出 id 帮助定位"订阅 ACK 成功但零帧"。
+                    ZLog.w(TAG, "EVENT_FIRE id=$id no listener, dropped (buffer size=${eventListeners.size})")
+                    return
+                }
+                ZLog.d(TAG, "EVENT_FIRE id=$id channel=$channelName")
                 // 修复依据（P1-4）：去掉 scope.launch 中转——launch 不保序且 DROP_OLDEST
                 // 会静默丢帧；onMessage 只被单一 socket 读协程调用，此处同步 emit 保序。
                 _events.tryEmit(EventFireData(channelName, event, body))
@@ -270,6 +277,9 @@ class ChannelClient(
             ackCounter.getAndIncrement().toInt(),
             body,
         )
+        // 诊断：EventListen 是 fire-and-forget，没有任何 ACK——若 frame 因 onSend 未接线
+        // 或 channel 未 IDLE 而发不出去，服务端永远不知道要 fan-out，表现为 ACK 能到、零帧。
+        ZLog.i(TAG, "listenEvent id=$id channel=$channelName event=$eventName")
         onSend?.invoke(frame)
         return id
     }
