@@ -18,11 +18,14 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.ExpandMore
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -369,6 +372,15 @@ private fun WorkspacePickerSheet(
     onDismiss: () -> Unit,
 ) {
     val zc = LocalZcodeColors.current
+    // 搜索（用户要求）：53 个工作区滚动找太慢，按名称/路径前缀过滤
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(query, workspaces) {
+        if (query.isBlank()) workspaces
+        else workspaces.filter { ws ->
+            ws.label?.contains(query, ignoreCase = true) == true ||
+                ws.path.contains(query, ignoreCase = true)
+        }
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = zc.panel,
@@ -380,6 +392,29 @@ private fun WorkspacePickerSheet(
             color = zc.text,
             modifier = Modifier.padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm),
         )
+        // 搜索框（工作区 >5 个时显示）
+        if (workspaces.size > 5) {
+            androidx.compose.material3.OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text("搜索工作区名称或路径…", style = ZcodeType.uiSm, color = zc.textTertiary) },
+                leadingIcon = {
+                    Icon(Icons.Rounded.Search, contentDescription = "搜索", modifier = Modifier.size(18.dp))
+                },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Rounded.Close, contentDescription = "清除", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.xs),
+                shape = ZcodeShape.control,
+            )
+        }
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = ZcodeSpacing.xxl),
@@ -393,8 +428,17 @@ private fun WorkspacePickerSheet(
                         modifier = Modifier.padding(ZcodeSpacing.screenPadding),
                     )
                 }
+            } else if (filtered.isEmpty()) {
+                item {
+                    Text(
+                        "没有匹配「$query」的工作区",
+                        style = ZcodeType.uiSm,
+                        color = zc.textTertiary,
+                        modifier = Modifier.padding(ZcodeSpacing.screenPadding),
+                    )
+                }
             }
-            itemsIndexed(workspaces, key = { _, ws -> ws.path }) { _, ws ->
+            itemsIndexed(filtered, key = { _, ws -> ws.path }) { _, ws ->
                 val selected = ws.path == currentPath
                 Row(
                     modifier = Modifier

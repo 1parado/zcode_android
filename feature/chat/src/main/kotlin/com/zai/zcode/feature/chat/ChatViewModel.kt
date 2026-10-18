@@ -8,6 +8,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zai.zcode.core.common.ClientIdProvider
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.rpc.asObjectOrNull
+import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -87,6 +89,18 @@ class ChatViewModel @Inject constructor(
 
     /** 一档协作模式（switchCollaborationMode 的 mode 值 + 中文标签）。 */
     data class ModeOption(val mode: String, val label: String, val description: String)
+
+    init {
+        // 从会话快照 state 读当前模式/档位（config 投影），保证 UI 与电脑端一致
+        viewModelScope.launch {
+            ui.collect { snapshot ->
+                snapshot.state?.get("config")?.asObjectOrNull()?.let { cfg ->
+                    cfg["mode"].asStringOrNull()?.let { if (currentMode != it) currentMode = it }
+                    cfg["thoughtLevel"].asStringOrNull()?.let { if (currentThought != it) currentThought = it }
+                }
+            }
+        }
+    }
 
     /** 当前协作模式（snapshot config 投影;读不到时 null=未知，UI 显示「默认」）。 */
     var currentMode by mutableStateOf<String?>(null)

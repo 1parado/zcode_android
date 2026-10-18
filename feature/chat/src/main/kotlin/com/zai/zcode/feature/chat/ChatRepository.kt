@@ -203,6 +203,8 @@ class ChatRepository(
         val rows: List<ChatRowKind> = emptyList(),
         val revision: Long? = null,
         val phase: String? = null,
+        /** 会话 state 原文（config 投影读 mode/thoughtLevel 用）。 */
+        val state: JsonObject? = null,
         /** phase 是封闭枚举（sessionPhaseSchema：draft、prewarming、running、
          *  completedSuccess、completedInterrupted、error），UI 运行态判定不猜子串（评审 P3）。 */
         val isRunning: Boolean = false,
@@ -615,53 +617,76 @@ class ChatRepository(
     }
 
     /** 切换本会话模型（switchModelConfig；thought 沿用官方必填形状，默认 medium）。 */
-    suspend fun switchModel(providerId: String, modelId: String, thought: String = "medium"): Boolean {
-        val p = connection.protocol.value ?: return false
-        return runCatching {
-            val ack = p.switchModel(
-                workspacePath = workspacePath,
-                sessionId = sessionId,
-                provider = providerId,
-                model = modelId,
-                thought = thought,
-                workspaceIdentity = workspaceIdentity,
-            )
-            ack.status == "accepted"
-        }.getOrElse {
-            ZLog.w(TAG, "switchModel failed: ${it.message}")
-            false
-        }
-    }
+    suspend fun switchModel(providerId: String, modelId: String, thought: String = "medium"): Boolean =
+        sendCasCommand("switchModelConfig", provider = providerId, model = modelId, thought = thought)
 
     /**
      * 切换协作模式（switchCollaborationMode）。
      * 官方四档（zh-CN 文案）：plan=计划模式, guarded=变更前确认, yolo=自主模式, build=完全访问。
      */
-    suspend fun switchMode(mode: String): Boolean {
-        val p = connection.protocol.value ?: return false
-        return runCatching {
-            val ack = p.switchCollaborationMode(
-                workspacePath = workspacePath,
-                sessionId = sessionId,
-                mode = mode,
-                workspaceIdentity = workspaceIdentity,
-            )
-            ack.status == "accepted"
-        }.getOrElse {
-            ZLog.w(TAG, "switchMode failed: ${it.message}")
-            false
-        }
-    }
+    suspend fun switchMode(mode: String): Boolean =
+        sendCasCommand("switchCollaborationMode", mode = mode)
 
     /**
      * 切换思考档位：复用 switchModelConfig（官方语义：thought 是模型配置的附属，
      * useDraftConfigControl.handleDraftSelectThought 与 model 一起写回同一命令）。
      */
     suspend fun switchThought(thought: String): Boolean {
-        val p = connection.protocol.value ?: return false
         // 需要当前 provider/model 才能发合法 switchModelConfig（schema 三字段必填）
         val cur = loadCurrentSelection() ?: return false
         return switchModel(cur.providerId, cur.modelId, thought)
+    }
+
+    /**
+     * CAS 命令统一发送（对齐官方 zcodeV4HostCommand.sendHostCasCommandV4）：
+     * switchModelConfig / switchCollaborationMode 在 COMMANDS_REQUIRING_BASE_REVISION
+     * 里，信封必须带 baseRevision；服务端并发裁决返回 stale 时用 revisionAtDecision
+     * 重试（最多 4 次）。此前不带 baseRevision 直接被拒（用户报「改不了」的根因）。
+     */
+    private suspend fun sendCasCommand(
+        type: String,
+        provider: String? = null,
+        model: String? = null,
+        thought: String? = null,
+        mode: String? = null,
+    ): Boolean {
+        val p = connection.protocol.value ?: return false
+        return runCatching {
+            var baseRevision = _ui.value.revision ?: 0L
+            repeat(4) {
+                val payload = buildJsonObject {
+                    if (provider != null) put("provider", provider)
+                    if (model != null) put("model", model)
+                    if (thought != null) put("thought", thought)
+                    if (mode != null) put("mode", mode)
+                }
+                val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
+                    commandId = java.util.UUID.randomUUID().toString(),
+                    clientId = clientId,
+                    sessionId = sessionId,
+                    type = type,
+                    payload = payload,
+                    baseRevision = baseRevision,
+                )
+                val ack = p.sendCommand(workspacePath, envelope, workspaceIdentity, timeoutMs = 30_000)
+                when {
+                    ack.status == "accepted" -> return true
+                    // stale：并发修订，用服务端裁决时的 revision 重试
+                    ack.status == "stale" && ack.revisionAtDecision != null -> {
+                        baseRevision = ack.revisionAtDecision!!
+                    }
+                    else -> {
+                        ZLog.w(TAG, "$type rejected: ${ack.status} ${ack.reasonCode ?: ""} ${ack.message ?: ""}")
+                        return false
+                    }
+                }
+            }
+            ZLog.w(TAG, "$type stale after 4 attempts")
+            false
+        }.getOrElse {
+            ZLog.w(TAG, "$type failed: ${it.message}")
+            false
+        }
     }
 
     /** 一个可选模型项（选择器列表行）。 */
@@ -744,6 +769,7 @@ class ChatRepository(
             // 不再手写 (x as? JsonPrimitive)?.content 解析
             revision = revision.asLongOrNull(),
             phase = st.state?.get("phase").asStringOrNull(),
+            state = st.state,
             // 修复依据（P3，评审 2026-10-17）：phase 是封闭枚举，运行态在此映射，
             // 不在 UI 里 contains("run") 猜子串
             isRunning = st.state?.get("phase").asStringOrNull()

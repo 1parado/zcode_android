@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DesktopWindows
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Psychology
@@ -624,18 +625,41 @@ private fun ComposerConfigBar(viewModel: ChatViewModel, onPickModel: () -> Unit)
 }
 
 @Composable
-private fun ConfigChip(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String, onClick: () -> Unit) {
+private fun ConfigChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    emphasized: Boolean = false,
+) {
     val zc = LocalZcodeColors.current
     Row(
-        Modifier
+        modifier
             .clip(ZcodeShape.control)
-            .background(zc.input)
+            .background(if (emphasized) zc.panel else zc.input)
             .clickable(onClick = onClick)
-            .padding(horizontal = ZcodeSpacing.sm, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp), tint = zc.textSecondary)
-        Spacer(Modifier.width(4.dp))
-        Text(text, style = ZcodeType.uiXs, color = zc.textSecondary, maxLines = 1)
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = if (emphasized) zc.queued else zc.textSecondary,
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text,
+            style = ZcodeType.uiXs,
+            color = if (emphasized) zc.text else zc.textSecondary,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(2.dp))
+        Icon(
+            Icons.Rounded.ExpandMore,
+            contentDescription = null,
+            modifier = Modifier.size(12.dp),
+            tint = zc.textTertiary,
+        )
     }
 }
