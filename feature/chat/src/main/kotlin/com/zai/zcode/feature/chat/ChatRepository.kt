@@ -635,6 +635,7 @@ class ChatRepository(
                         providerName = provider.providerName,
                         modelId = m.modelId,
                         label = if (provider.providerName.isBlank()) m.name else "${provider.providerName} · ${m.name}",
+                        supportedThoughtLevels = m.supportedThoughtLevels,
                     )
                 }
             }
@@ -810,6 +811,8 @@ class ChatRepository(
         val providerName: String,
         val modelId: String,
         val label: String,
+        /** 该模型支持的思考档位（服务端 optionSpecs.reasoningLevel.values）。 */
+        val supportedThoughtLevels: List<String> = emptyList(),
     )
 
     /**

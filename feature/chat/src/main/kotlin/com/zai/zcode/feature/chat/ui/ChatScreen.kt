@@ -624,7 +624,12 @@ private fun ComposerConfigBar(viewModel: ChatViewModel, onPickModel: () -> Unit)
                 onClick = { showThoughtMenu = true },
             )
             DropdownMenu(expanded = showThoughtMenu, onDismissRequest = { showThoughtMenu = false }) {
-                viewModel.thoughtOptions.forEach { level ->
+                // 只显示当前模型支持的档位（服务端 optionSpecs；GLM 等不支持 xhigh
+                // 的模型不再显示会被拒绝的选项——「选极高跳最高」的根因）
+                val levels = viewModel.currentModel?.supportedThoughtLevels
+                    ?.ifEmpty { viewModel.thoughtOptions }
+                    ?: viewModel.thoughtOptions
+                levels.forEach { level ->
                     DropdownMenuItem(
                         text = { Text(viewModel.thoughtLabel(level), style = ZcodeType.uiSm, color = zc.text) },
                         leadingIcon = {

@@ -2,6 +2,7 @@ package com.zai.zcode.core.protocol.v4
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.protocol.rpc.ChannelClient
+import com.zai.zcode.core.protocol.rpc.asArrayOrNull
 import com.zai.zcode.core.protocol.rpc.asLongOrNull
 import com.zai.zcode.core.protocol.rpc.asObjectOrNull
 import com.zai.zcode.core.protocol.rpc.asStringOrNull
@@ -550,6 +551,21 @@ class ZcodeProtocolV4(
             raw["displayName"].asStringOrNull()
                 ?: raw["name"].asStringOrNull()
                 ?: raw["modelId"].asStringOrNull() ?: ""
+
+        /**
+         * 该模型支持的思考档位（config.optionSpecs.reasoningLevel.values）。
+         * 修复依据（用户报「选极高跳到最高/选其他模型跳回 GLM-5.3」）：服务端
+         * registry.ts:151 validateModelSelectionOptions 对不在档位集的 reasoningLevel
+         * 直接拒绝（reasoning-level-not-supported）。UI 必须只显示当前模型支持的档位
+         * （官方 thoughtLevel 下拉同语义），否则用户选了必被拒/收敛。
+         */
+        val supportedThoughtLevels: List<String> =
+            raw["config"]?.asObjectOrNull()
+                ?.get("optionSpecs")?.asObjectOrNull()
+                ?.get("reasoningLevel")?.asObjectOrNull()
+                ?.get("values").asArrayOrNull()
+                ?.mapNotNull { it.asStringOrNull() }
+                ?: emptyList()
     }
 
     class Selection(raw: JsonObject) {

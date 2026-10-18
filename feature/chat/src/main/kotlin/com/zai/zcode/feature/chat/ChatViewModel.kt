@@ -77,12 +77,36 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    /** 选中一个模型：切换命令成功后乐观更新本地选中。 */
+    /**
+     * 选中一个模型：切换命令成功后乐观更新本地选中。
+     * 修复依据（用户报「选了都跳回 GLM-5.3」）：switchModelConfig 的 thought 必须在
+     * 目标模型的档位集内（服务端 validateModelSelectionOptions 直接拒绝）。
+     * 切模型时档位取「目标模型支持的档位里最接近当前档位的一个」——当前档位在
+     * 新模型不支持时回落到该模型的最高档，避免整个命令被拒导致切不动。
+     */
     fun selectModel(option: ChatRepository.ModelOption) {
         viewModelScope.launch {
-            val ok = repository.switchModel(option.providerId, option.modelId)
-            if (ok) currentModel = option
+            val curThought = currentThought
+            val target = pickSupportedThought(option, curThought)
+            val ok = repository.switchModel(option.providerId, option.modelId, target)
+            if (ok) {
+                currentModel = option
+                currentThought = target
+            }
         }
+    }
+
+    /** 目标模型支持的最接近档位：原档位支持则保留；否则取该模型最高一档。 */
+    private fun pickSupportedThought(option: ChatRepository.ModelOption, cur: String?): String {
+        val levels = option.supportedThoughtLevels
+        if (levels.isEmpty()) return cur ?: "medium"
+        if (cur != null && cur in levels) return cur
+        // 档位序（协议 low<medium<high<xhigh<max）：取比当前低的最近档，没有就取最低
+        val order = listOf("low", "medium", "high", "xhigh", "max")
+        val curIdx = order.indexOf(cur)
+        val supported = levels.sortedBy { order.indexOf(it) }
+        return supported.lastOrNull { order.indexOf(it) <= (if (curIdx < 0) order.lastIndex else curIdx) }
+            ?: supported.first()
     }
 
     // ── 权限模式 + 思考档位（官方 mobile composer 同款四档/推理档）──
@@ -139,6 +163,10 @@ class ChatViewModel @Inject constructor(
     }
 
     fun switchThought(thought: String) {
+        // 当前模型不支持该档位时直接忽略（UI 应只展示支持的档位，这里是防御）：
+        // 硬发会被服务端 reasoning-level-not-supported 拒绝，用户看到「跳回去」。
+        val supported = currentModel?.supportedThoughtLevels
+        if (supported != null && supported.isNotEmpty() && thought !in supported) return
         val previous = currentThought
         currentThought = thought
         viewModelScope.launch {
