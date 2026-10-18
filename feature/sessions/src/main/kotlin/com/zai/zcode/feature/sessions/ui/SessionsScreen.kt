@@ -412,28 +412,57 @@ private fun WorkspacePickerSheet(
             color = zc.text,
             modifier = Modifier.padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm),
         )
-        // 搜索框（工作区 >5 个时显示）
+        // 搜索框（工作区 >5 个时显示）。
+        // 美化对齐：全 App 输入语言是无边框胶囊（ZcodeShape.input 20dp 圆角 +
+        // zc.input 底色），OutlinedTextField 的描边方框是表单语言的残留，与
+        // 会话页输入框、配置 chip 都不一致。改用 BasicLineTextField 自绘胶囊。
         if (workspaces.size > 5) {
-            androidx.compose.material3.OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                placeholder = { Text("搜索工作区名称或路径…", style = ZcodeType.uiSm, color = zc.textTertiary) },
-                leadingIcon = {
-                    Icon(Icons.Rounded.Search, contentDescription = "搜索", modifier = Modifier.size(18.dp))
-                },
-                trailingIcon = {
-                    if (query.isNotEmpty()) {
-                        IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Rounded.Close, contentDescription = "清除", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                },
-                modifier = Modifier
+            Row(
+                Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.xs),
-                shape = ZcodeShape.control,
-            )
+                    .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm)
+                    .clip(ZcodeShape.input)
+                    .background(zc.input)
+                    .padding(horizontal = ZcodeSpacing.md, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Rounded.Search,
+                    contentDescription = "搜索",
+                    modifier = Modifier.size(18.dp),
+                    tint = zc.textTertiary,
+                )
+                Spacer(Modifier.width(8.dp))
+                androidx.compose.foundation.text.BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = ZcodeType.uiSm.copy(color = zc.text),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(zc.text),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { inner ->
+                        if (query.isEmpty()) {
+                            Text(
+                                "搜索工作区名称或路径…",
+                                style = ZcodeType.uiSm,
+                                color = zc.textTertiary,
+                            )
+                        }
+                        inner()
+                    },
+                )
+                if (query.isNotEmpty()) {
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(onClick = { query = "" }, modifier = Modifier.size(24.dp)) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = "清除",
+                            modifier = Modifier.size(16.dp),
+                            tint = zc.textTertiary,
+                        )
+                    }
+                }
+            }
         }
         LazyColumn(
             modifier = Modifier.fillMaxWidth(),
