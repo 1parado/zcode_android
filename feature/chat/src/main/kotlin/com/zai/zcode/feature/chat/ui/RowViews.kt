@@ -2,6 +2,7 @@ package com.zai.zcode.feature.chat.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,9 +20,11 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,6 +49,7 @@ import com.zai.zcode.core.design.ZcodeMotion
 import com.zai.zcode.core.design.jellyPress
 import com.zai.zcode.feature.chat.ChatRepository
 import com.zai.zcode.feature.render.MarkdownContent
+import kotlinx.coroutines.delay
 
 /**
  * 会话流的行渲染（docs/ui-design.md §5.3）。
@@ -77,6 +83,8 @@ internal fun ChatRowView(row: ChatRepository.ChatRowKind) {
 @Composable
 private fun UserInputRow(row: ChatRepository.ChatRowKind.UserInput) {
     val zc = LocalZcodeColors.current
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Text(
             row.text,
@@ -85,22 +93,80 @@ private fun UserInputRow(row: ChatRepository.ChatRowKind.UserInput) {
                 .fillMaxWidth(0.84f)
                 .clip(RoundedCornerShape(18.dp, 6.dp, 18.dp, 18.dp))
                 .background(zc.input)
+                // 一键复制：长按气泡全文入剪贴板（用户消息是纯文本，无 Markdown 面板，
+                // 长按是移动端对"复制这段话"最惯用的手势）
+                .combinedClickable(
+                    enabled = true,
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(),
+                    onLongClick = {
+                        clipboard.setText(AnnotatedString(row.text))
+                        copied = true
+                    },
+                    onClick = {},
+                )
                 .padding(horizontal = ZcodeSpacing.md, vertical = 10.dp),
             style = ZcodeType.uiMd,
             color = zc.text,
         )
+    }
+    // 复制成功提示：短暂显示后消失，不弹 Toast（Toast 与气泡在同一屏幕区域叠加，
+    // 视觉重心分散；行内小徽标足够）。
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_500)
+            copied = false
+        }
+    }
+    if (copied) {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 2.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Text("已复制", style = ZcodeType.uiXs, color = zc.textTertiary)
+        }
     }
 }
 
 @Composable
 private fun AssistantTextRow(row: ChatRepository.ChatRowKind.AssistantText) {
     val zc = LocalZcodeColors.current
+    val clipboard = LocalClipboardManager.current
+    var copied by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
+        // 复制入口只在非流式时展示：流式中内容还在变，复制到一半的文本没有意义，
+        // 且按钮常驻会在每条回复开头闪一下。
+        if (!row.streaming && row.text.length > 80) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (copied) "已复制 ✓" else "复制全文",
+                    style = ZcodeType.uiXs,
+                    color = if (copied) zc.running else zc.textTertiary,
+                    modifier = Modifier
+                        .clip(ZcodeShape.control)
+                        .clickable {
+                            clipboard.setText(AnnotatedString(row.text))
+                            copied = true
+                        }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
         MarkdownContent(raw = row.text, isStreaming = row.streaming)
         // 修复依据（spec 8.6「无 emoji」）：原先用 Text("●") 当流式指示，那是字形不是矢量，
         // 不同字体会渲染成不同东西（乃至豆腐块）。走 LiveDot + 呼吸动画。
         if (row.streaming) {
             LiveDot(ZcodeStatus.Running, Modifier.padding(top = ZcodeSpacing.sm))
+        }
+    }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_500)
+            copied = false
         }
     }
 }

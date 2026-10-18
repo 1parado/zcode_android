@@ -53,7 +53,9 @@ private val SUBSCRIBE_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 15_000L, 30_
  * 帧，基本可以判定这次订阅建立了但内容不会来（服务端推流侧失败），应当重订阅而不是
  * 让用户对着骨架屏等下去。给 8s 而不是 2s：relay 链路 + 桌面冷启动读盘的往返需要这个量级。
  */
-private const val SNAPSHOT_GRACE_MS = 8_000L
+// 修复依据（真机 21:21 订阅 120s 期间的"读取失败"误报）：grace 必须覆盖订阅超时窗口，
+// 否则订阅还在等 ACK，UI 已经按"失败"渲染。对齐服务端冷恢复最坏耗时 + 余量。
+private const val SNAPSHOT_GRACE_MS = 150_000L
 
 /** 顶栏标题截断长度：一行宽，超出的部分交给 Text 的 Ellipsis。 */
 private const val TITLE_MAX_CHARS = 60
@@ -263,7 +265,6 @@ class ChatRepository(
     /** 订阅重试退避阶梯下标；成功订阅后归零。 */
     private var retryDelayIndex = 0
     /** 「零行快照 + 非零水位」矛盾快照的重订阅计数（上限 3，防真空会话死循环）。 */
-    private var emptySnapshotRetries = 0
     /** 退避重试协程：重订阅时取消旧的，同一时刻只有一个在跑。 */
     private var retryJob: Job? = null
     /** 已收到过首帧：重试期间保留已渲染的行，不把内容区刷回骨架屏。 */
@@ -484,27 +485,29 @@ class ChatRepository(
         // 防御：本地已有非空行时，空快照不应用；改走全新订阅（initial 快照由 CLI
         // 恢复历史 Session 生成，已证实带完整行）。只有全新订阅也返回空，才接受
         // "会话真的没有内容"。
-        if (frame.isSnapshot && frame.fromSeq == 0L) {
-            val snapRows = frame.snapshotObject()?.get("rows").asArrayOrNull()?.size ?: -1
+        if (frame.isSnapshot) {
+            val snap = frame.snapshotObject()
+            val snapRows = snap?.get("rows").asArrayOrNull()?.size ?: -1
             val currentRows = reducer.snapshot(sessionId).rows.size
+            // 诊断：记录每个快照帧的完整水位形状，定位 20:51:35 那类未触发防御的清空帧
+            ZLog.i(TAG, "snapshot frame: fromSeq=${frame.fromSeq} toSeq=${frame.toSeq} rows=$snapRows local=$currentRows keys=${snap?.keys}")
+            // 防御一（真机 20:34）：空快照清掉本地已有对话——拒绝应用
             if (snapRows == 0 && currentRows > 0) {
-                ZLog.w(TAG, "empty snapshot for non-empty session ($currentRows rows), ignore & resubscribe")
-                resubscribeForFreshSnapshot()
+                ZLog.w(TAG, "empty snapshot for non-empty session ($currentRows rows), ignore")
+                publish()
                 return
             }
-            // 修复依据（真机 20:43 现场日志）：打开会话时 initial 快照 rows=0 但
-            // toSeq=2896——服务端 CLI 冷恢复是异步的，首帧在历史行装载完成前发布，
-            // seq 已推进而行表为空。这是"恢复未完成"，不是"会话没有内容"。
-            // 不信任矛盾快照：重订阅走冷恢复重试（上限 3 次，防服务端真返回空会话时死循环）。
-            if (snapRows == 0 && frame.toSeq > 0L) {
-                if (emptySnapshotRetries >= 3) {
-                    ZLog.w(TAG, "empty snapshot seq=${frame.toSeq} persists after $emptySnapshotRetries retries, accept as-is")
-                } else {
-                    emptySnapshotRetries++
-                    ZLog.w(TAG, "empty snapshot with seq=${frame.toSeq} (retry $emptySnapshotRetries/3), resubscribing")
-                    resubscribeForFreshSnapshot()
-                    return
-                }
+            // 防御二（真机 21:05「点进去没有之前的聊天内容」根因）：冷订阅 initial 快照
+            // **不含 rows 键**（rows=-1），toSeq=3066 说明服务端知道有历史——历史行不进
+            // 快照，服务端设计上走 conversationRowsRangeV4 分页拉取（桌面 loadOlder 语义），
+            // 手机端此前从未实现该 RPC。快照本身（seq/state 记账）照常应用，行表由
+            // [loadHistoryBackfill] 从 rowsRange 拉回后 seed 进 reducer。
+            if (snapRows <= 0 && frame.toSeq > 0L) {
+                val applied = reducer.apply(frame)
+                ZLog.d(TAG, "onFrame snapshot(no rows) applied=$applied, backfilling history via rowsRange")
+                if (applied) publish()
+                loadHistoryBackfill()
+                return
             }
         }
         val applied = reducer.apply(frame)
@@ -513,24 +516,43 @@ class ChatRepository(
     }
 
     /**
-     * 空快照防御后的重订阅：丢掉当前订阅，走 [subscribe]（带水位的重订阅会被服务端
-     * 按 replayable 补发，仍可能拿到空 recovery——所以这里显式清零 reducer 后按
-     * 无水位全新订阅，服务端走 CLI 冷恢复路径回完整快照）。
+     * 历史行回填：rowsRange 从尾部向前拉一页（200 行）seed 进 reducer。
+     *
+     * 单飞 + 有界：只拉一页（手机屏不可能一屏滚出 200 行之前），hasMore 时由用户
+     * 上滑再拉（loadOlder 留给后续版本；当前先解决"打开看不到任何历史"的主诉）。
+     * 拉取失败静默（快照路径不可用时的降级，不打断实时流）。
      */
-    private fun resubscribeForFreshSnapshot() {
-        val p = connection.protocol.value ?: return
-        retryJob?.cancel()
-        retryJob = null
-        attachedProtocol = null
-        conversationSubscriptionId = null
-        hasDeliveredSnapshot = false
-        _loadState.value = ChatLoadState.Loading
-        // reducer 清零是关键：不清的话新快照到达前旧行还挂着，且 reducer 的 seq 水位
-        // 会让旧快照被当成"旧帧"丢弃。
-        reducer.reset()
-        lastSeq = 0
-        lastLogEpoch = null
-        subscribe(p)
+    private var historyBackfillJob: kotlinx.coroutines.Job? = null
+    private fun loadHistoryBackfill() {
+        if (historyBackfillJob?.isActive == true) return
+        historyBackfillJob = scope.launch {
+            try {
+                val p = connection.protocol.value ?: return@launch
+                val page = p.conversationRowsRange(
+                    sessionId = sessionId,
+                    workspacePath = workspacePath,
+                    workspaceIdentity = workspaceIdentity,
+                )
+                if (page == null) {
+                    ZLog.w(TAG, "history backfill: rowsRange returned non-object")
+                    return@launch
+                }
+                reducer.seedRows(page.rows)
+                ZLog.i(TAG, "history backfill: seeded ${page.rows.size} rows (hasMore=${page.hasMore})")
+                if (page.rows.isNotEmpty()) {
+                    // 拿到了可渲染的历史行，撤掉骨架屏
+                    if (!hasDeliveredSnapshot) {
+                        hasDeliveredSnapshot = true
+                        snapshotGraceJob?.cancel()
+                        snapshotGraceJob = null
+                        _loadState.value = ChatLoadState.Ready
+                    }
+                    publish()
+                }
+            } catch (e: Exception) {
+                ZLog.w(TAG, "history backfill failed: ${e.message}")
+            }
+        }
     }
 
     /**
@@ -597,7 +619,6 @@ class ChatRepository(
             snapshotGraceJob = null
             _loadState.value = ChatLoadState.Ready
             // 拿到了可渲染的行：矛盾快照的重试计数归零（可能是换会话后复用本仓库实例）。
-            if (st.rows.isNotEmpty()) emptySnapshotRetries = 0
         }
         val revision = st.state?.get("revision")
         _ui.value = ChatUi(

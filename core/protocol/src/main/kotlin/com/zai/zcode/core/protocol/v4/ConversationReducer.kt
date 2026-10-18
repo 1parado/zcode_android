@@ -84,6 +84,25 @@ class ConversationReducer {
         return true
     }
 
+    /**
+     * 批量灌入历史行（rowsRange 分页）。
+     *
+     * 修复依据（真机 21:05「点进去没有之前的聊天内容」）：冷订阅 initial 快照不含
+     * rows（服务端历史行走 rowsRange 分页，桌面端 loadOlder 语义），手机端拉回分页后
+     * 需要与实时归约状态合并——按 rowId 覆盖插入（rowsRange 的行是权威历史快照，
+     * 但同 rowId 的本地行可能已收到更新的 delta），seq/logEpoch 不动（由快照帧记账）。
+     */
+    fun seedRows(rows: List<JsonObject>) {
+        for (row in rows) {
+            val id = RowView(row).rowId ?: continue
+            // 只填补缺失的行：本地已有同 id 行说明已收到该行后续 delta，本地更新
+            val existing = rowsById[id]
+            if (existing == null || RowView(row).createdAtSeq.let { it != null && it > (RowView(existing).createdAtSeq ?: 0L) }) {
+                rowsById[id] = row
+            }
+        }
+    }
+
     private fun applyDelta(delta: JsonObject) {
         when (val view = ConversationDeltaView.from(delta)) {
             is ConversationDeltaView.RowAppended -> {

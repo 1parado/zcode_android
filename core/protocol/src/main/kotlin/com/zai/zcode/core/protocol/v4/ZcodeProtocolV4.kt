@@ -2,6 +2,8 @@ package com.zai.zcode.core.protocol.v4
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.protocol.rpc.ChannelClient
+import com.zai.zcode.core.protocol.rpc.asLongOrNull
+import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -17,8 +19,13 @@ import kotlinx.serialization.json.put
 
 private const val TAG = "ZcodeProtocolV4"
 
-/** 订阅应答超时：桌面可能要先预热 session runtime（zemote conversation.dart:821）。 */
-private const val SUBSCRIBE_TIMEOUT_MS = 60_000L
+/**
+ * 订阅应答超时：桌面可能要先预热 session runtime（zemote conversation.dart:821）。
+ * 修复依据（真机 21:21「读取会话失败」）：CLI 冷恢复大历史会话（seq 3000+）时
+ * 60s 不够——连续两次订阅超时，官方对 createSession 给 90s，订阅是同量级的
+ * 冷路径，对齐 120s。
+ */
+private const val SUBSCRIBE_TIMEOUT_MS = 120_000L
 
 /**
  * 任务索引读取超时：读的是 SQLite，不需要等 CLI 预热，12s 足够
@@ -450,6 +457,60 @@ class ZcodeProtocolV4(
         onSessionsIndexFrame = null
         onAssemblyFault = null
         _phase.value = Phase.Closed
+    }
+
+    /**
+     * 行分页拉取（conversationRowsRangeV4）：取 rowId < beforeRowId 的行（缺省从尾部向前）。
+     *
+     * 修复依据（真机 21:05 现场日志「点进去没有之前的聊天内容」）：冷订阅的 initial
+     * 快照只有 rows 键缺失/为空的 shape（snapshot keys 不含 rows），toSeq=3066 说明
+     * 服务端明确知道会话有历史——历史行不走快照，桌面端靠 rowsRange 分页拉（loadOlder）。
+     * 手机端此前从未实现该 RPC，打开会话只有实时增量、没有历史。
+     *
+     * 返回 null = 非 JSON 对象（协议异常），调用方按失败处理；hasMore=false 表示已到头。
+     */
+    suspend fun conversationRowsRange(
+        sessionId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        limit: Int = ROWS_RANGE_DEFAULT_LIMIT,
+        beforeRowId: Long? = null,
+        timeoutMs: Long = 30_000,
+    ): ConversationRowsRangeResult? {
+        // 修复依据（真机 21:11「history backfill failed: The "path" argument must be
+        // of type string」）：rowsRange 走 getReadOnlyClient(params)，params 是
+        // ZCodeAgentWorkspaceTarget——服务端要用 workspacePath 解析 runtime 的 cwd。
+        // 只发 sessionId 时 Node 的 path 模块拿到 undefined 直接抛错。与 subscribe
+        // 同形：workspacePath 必带，identity 有则带（AGENTS.md 贯穿传递）。
+        val params = buildJsonObject {
+            put("workspacePath", workspacePath)
+            if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+            put("sessionId", sessionId)
+            put("limit", limit)
+            if (beforeRowId != null) put("beforeRowId", beforeRowId)
+        }
+        val result = channel.request(
+            V4.CHANNEL_ZCODE_AGENT,
+            V4.METHOD_CONVERSATION_ROWS_RANGE,
+            params,
+            timeoutMs,
+        )
+        val obj = result as? JsonObject ?: return null
+        return ConversationRowsRangeResult(obj)
+    }
+
+    companion object {
+        /** 单页行数上限（PROTOCOL_V4_LIMITS.rowsRangeMaxLimit）。 */
+        const val ROWS_RANGE_DEFAULT_LIMIT = 200
+    }
+
+    /** rowsRange 结果投影（v4ConversationRowsRangeResultSchema 子集）。 */
+    class ConversationRowsRangeResult(raw: JsonObject) {
+        val rows: List<JsonObject> =
+            (raw["rows"] as? JsonArray)?.mapNotNull { it as? JsonObject } ?: emptyList()
+        val atSeq: Long = raw["atSeq"].asLongOrNull() ?: 0L
+        val atLogEpoch: String? = raw["atLogEpoch"].asStringOrNull()
+        val hasMore: Boolean = raw["hasMore"] == kotlinx.serialization.json.JsonPrimitive(true)
     }
 
     private fun resultAsObject(result: Any?): JsonObject {
