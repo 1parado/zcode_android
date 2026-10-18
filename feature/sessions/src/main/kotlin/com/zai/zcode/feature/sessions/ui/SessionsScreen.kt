@@ -12,11 +12,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.DesktopWindows
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -30,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ModalBottomSheet
@@ -72,11 +76,14 @@ fun SessionsScreen(
     val zc = LocalZcodeColors.current
 
     Column(Modifier.fillMaxSize()) {
-        // 顶栏：标题 + 设备 Chip + 设置
+        // 顶栏：标题 + 设置（触控重设计：DeviceChip 从顶栏挤窄的位置移出，改为
+        // 下方整行工作区选择卡——用户报「工作区按钮太不好点」，被标题挤压后
+        // 触达区不足 40dp；整行卡片点击面积是原来的 ~8 倍，官方移动端同样是
+        // 独立的 workspace 行）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.md),
+                .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
@@ -92,15 +99,47 @@ fun SessionsScreen(
                     },
                 )
             }
-            DeviceChip(
-                deviceName = currentWorkspace?.label
-                    ?: currentWorkspace?.path?.substringAfterLast('\\')?.substringAfterLast('/')
-                    ?: "这台电脑",
-                onClick = { showWorkspacePicker = true },
-            )
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = zc.textSecondary)
             }
+        }
+
+        // 工作区选择卡：整行可点，48dp 高，箭头示意可换
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = ZcodeSpacing.screenPadding)
+                .clip(ZcodeShape.card)
+                .background(zc.card)
+                .clickable { showWorkspacePicker = true }
+                .padding(horizontal = ZcodeSpacing.md, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.DesktopWindows,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = zc.textSecondary,
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("当前工作区", style = ZcodeType.uiXs, color = zc.textTertiary)
+                Text(
+                    currentWorkspace?.label
+                        ?: currentWorkspace?.path?.substringAfterLast('\\')?.substringAfterLast('/')
+                        ?: "这台电脑",
+                    style = ZcodeType.uiMd,
+                    color = zc.text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.Rounded.ExpandMore,
+                contentDescription = "切换工作区",
+                modifier = Modifier.size(20.dp),
+                tint = zc.textTertiary,
+            )
         }
 
         if (showWorkspacePicker) {
