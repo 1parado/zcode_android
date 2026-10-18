@@ -498,6 +498,10 @@ class RowView(val raw: JsonObject) {
     val markerObjective: String? get() = raw["marker"].asObjectOrNull()?.get("objective").asStringOrNull()
     val markerOutcome: String? get() = raw["marker"].asObjectOrNull()?.get("outcome").asStringOrNull()
     val markerToModel: String? get() = raw["marker"].asObjectOrNull()?.get("toModel").asStringOrNull()
+    /** modelChange marker 的目标 provider（rows.ts:364 modelChange payload）。 */
+    val markerToProvider: String? get() = raw["marker"].asObjectOrNull()?.get("toProvider").asStringOrNull()
+    /** modelChange marker 的目标思考档位。 */
+    val markerToThought: String? get() = raw["marker"].asObjectOrNull()?.get("toThought").asStringOrNull()
     val markerDetail: String? get() = raw["marker"].asObjectOrNull()?.get("detail").asStringOrNull()
     val markerIteration: Int? get() = raw["marker"].asObjectOrNull()?.get("iteration").asIntOrNull()
     /** marker 泳道：assistantWork / turnTailBoundary / lightBoundary（落位由服务端裁决）。 */

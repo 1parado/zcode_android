@@ -135,6 +135,9 @@ fun SessionsScreen(
                     },
                 )
             }
+            IconButton(onClick = { viewModel.openDraftSession() }) {
+                Icon(Icons.Rounded.Add, contentDescription = "新建会话", tint = zc.text)
+            }
             IconButton(onClick = onOpenSettings) {
                 Icon(Icons.Rounded.Settings, contentDescription = "设置", tint = zc.textSecondary)
             }
@@ -190,24 +193,6 @@ fun SessionsScreen(
                 },
                 onDismiss = { showWorkspacePicker = false },
             )
-        }
-
-        // 官方 sidebar 无状态筛选 tabs（核对 workspace-grouped-tasks + 用户反馈
-        // 「全部/需要你/运行中没必要」）：需要你/运行中由排序与行内指示表达。
-        // 新建按钮右对齐单独一行。
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = ZcodeSpacing.screenPadding)
-                .padding(top = ZcodeSpacing.lg, bottom = ZcodeSpacing.xs),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            // 修复依据（真机 v0.2.19「创建会话还是不行」）：「+」不再直接建空会话。
-            // 空会话是服务端 draft（纯内存、不落盘、不进任务索引），建了也看不见；
-            // 改为进入草稿页，由用户首条消息真正创建。
-            IconButton(onClick = { viewModel.openDraftSession() }) {
-                Icon(Icons.Rounded.Add, contentDescription = "新建会话", tint = zc.text)
-            }
         }
 
         createError?.let { msg ->

@@ -1076,7 +1076,13 @@ class ChatRepository(
      */
     private fun toChatRow(raw: kotlinx.serialization.json.JsonObject): ChatRowKind {
         val v = RowView(raw)
-        val streaming = v.state?.let { it != "done" && it != "error" && it != "aborted" } == true
+        // 修复依据（真机 01:10 截图：已结束会话末尾挂着绿色呼吸点）：state 缺失的行
+        // 不能视为 streaming——历史恢复的行没有 state 字段，旧判定 `null != done/error`
+        // 走 else 分支恒 false 是对的，但部分历史行带中间态 state（inputStreaming 等
+        // 落盘时的瞬时值），恢复后永远显示"流式中"。streaming 必须同时满足
+        // 会话整体在运行（publish 侧 isRunning 已判 phase），行级只信终态判定。
+        val streaming = ui.value.isRunning &&
+            v.state?.let { it != "done" && it != "error" && it != "aborted" } == true
         val rowId = v.rowId ?: -1
         return when (v.kind) {
             "userInput" -> ChatRowKind.UserInput(rowId, streaming, v.text.orEmpty(), v.inputOrigin)
@@ -1109,6 +1115,13 @@ class ChatRepository(
         "checkpointRestored" -> v.markerDetail ?: "已恢复检查点"
         "forkCreated" -> v.markerDetail ?: "已创建分支会话"
         "retryNotice" -> v.markerDetail ?: "重试中"
+        // modelChange（rows.ts:364）：官方渲染为轻边界「provider · model · 档位」，
+        // 而非裸 modelId 文本——此前落到 else 兜底只显示 toModel，丢 provider 与档位。
+        "modelChange" -> listOfNotNull(
+            v.markerToProvider?.substringBeforeLast("/")?.takeIf { it.isNotBlank() },
+            v.markerToModel?.substringAfterLast("/")?.takeIf { it.isNotBlank() },
+            v.markerToThought?.takeIf { it.isNotBlank() },
+        ).joinToString(" · ").takeIf { it.isNotBlank() }
         else -> v.markerObjective ?: v.markerDetail ?: v.markerOutcome ?: v.markerToModel ?: v.markerType
     }
 
