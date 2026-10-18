@@ -3,6 +3,7 @@ package com.zai.zcode.core.protocol.v4
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.protocol.rpc.ChannelClient
 import com.zai.zcode.core.protocol.rpc.asLongOrNull
+import com.zai.zcode.core.protocol.rpc.asObjectOrNull
 import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -601,6 +602,62 @@ class ZcodeProtocolV4(
     class Selection(raw: JsonObject) {
         val providerId: String = raw["providerId"].asStringOrNull() ?: ""
         val modelId: String = raw["modelId"].asStringOrNull() ?: ""
+    }
+
+    /**
+     * 读本地使用统计（usage-stats 通道 getAppUsageSnapshot，range: all/7d/30d）。
+     * 返回 null = 非 JSON 对象（老桌面无此服务）。
+     */
+    suspend fun appUsageSnapshot(range: String = "7d", timeoutMs: Long = 15_000): AppUsageSnapshot? {
+        val params = buildJsonObject { put("range", range) }
+        val result = channel.request(
+            V4.CHANNEL_USAGE_STATS,
+            V4.METHOD_APP_USAGE_SNAPSHOT,
+            params,
+            timeoutMs,
+        )
+        val obj = result as? JsonObject ?: return null
+        return AppUsageSnapshot(obj)
+    }
+
+    /** AppUsageSnapshot 投影（usage-stats.ts appUsageSnapshotSchema 子集）。 */
+    class AppUsageSnapshot(raw: JsonObject) {
+        private val summaryObj: JsonObject = raw["summary"]?.asObjectOrNull() ?: JsonObject(emptyMap())
+        val totalTokens: Long = summaryObj["totalTokens"].asLongOrNull() ?: 0L
+        val totalSessions: Long = summaryObj["totalSessions"].asLongOrNull() ?: 0L
+        val totalTurns: Long = summaryObj["totalTurns"].asLongOrNull() ?: 0L
+        val toolCallCount: Long = summaryObj["toolCallCount"].asLongOrNull() ?: 0L
+        val activeDays: Long = summaryObj["activeDays"].asLongOrNull() ?: 0L
+        val currentStreakDays: Long = summaryObj["currentStreakDays"].asLongOrNull() ?: 0L
+        val avgTimeToFirstTokenMs: Long? = summaryObj["avgTimeToFirstTokenMs"].asLongOrNull()
+        val favoriteModel: String? =
+            summaryObj["favoriteModel"]?.asObjectOrNull()
+                ?.get("modelId").asStringOrNull()
+    }
+
+    /**
+     * 读当前 OAuth 账号信息（oauth 通道 restoreCachedSession：本地缓存展示态，
+     * 不做远端校验——手机远控只展示，登录态管理在桌面端）。
+     */
+    suspend fun cachedAccount(timeoutMs: Long = 10_000): AccountInfo? {
+        val result = channel.request(V4.CHANNEL_OAUTH, V4.METHOD_OAUTH_CACHED_SESSION, null, timeoutMs)
+        val obj = result as? JsonObject ?: return null
+        // null 响应（未登录）可能被序列化成 JsonNull/空对象
+        if (obj.keys.isEmpty()) return null
+        return AccountInfo(obj)
+    }
+
+    /** UserInfo 投影（oauthProfileSchema）。 */
+    class AccountInfo(raw: JsonObject) {
+        val name: String = raw["name"].asStringOrNull()
+            ?: raw["nickname"].asStringOrNull()
+            ?: raw["username"].asStringOrNull()
+            ?: raw["email"].asStringOrNull()
+            ?: "已登录"
+        val email: String? = raw["email"].asStringOrNull()
+        val avatarUrl: String? = raw["avatarUrl"].asStringOrNull()
+            ?: raw["avatar"].asStringOrNull()
+            ?: raw["picture"].asStringOrNull()
     }
 
     private fun resultAsObject(result: Any?): JsonObject {

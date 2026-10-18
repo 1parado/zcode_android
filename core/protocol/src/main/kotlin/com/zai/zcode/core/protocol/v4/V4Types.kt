@@ -43,6 +43,14 @@ object V4 {
      */
     const val CHANNEL_MODEL_SELECTION = "model-selection"
     const val METHOD_MODEL_SELECTION_VIEW = "getView"
+
+    /** 本地使用统计（channels.ts:134 UsageStats: "usage-stats"）。 */
+    const val CHANNEL_USAGE_STATS = "usage-stats"
+    const val METHOD_APP_USAGE_SNAPSHOT = "getAppUsageSnapshot"
+
+    /** OAuth 账号会话（channels.ts:122 OAuth: "oauth"）。 */
+    const val CHANNEL_OAUTH = "oauth"
+    const val METHOD_OAUTH_CACHED_SESSION = "restoreCachedSession"
     const val METHOD_LIST_TASKS = "listTasks"
     const val METHOD_LIST_PINNED_TASKS = "listPinnedTasks"
     const val METHOD_LIST_ARCHIVED_TASKS = "listArchivedTasks"
