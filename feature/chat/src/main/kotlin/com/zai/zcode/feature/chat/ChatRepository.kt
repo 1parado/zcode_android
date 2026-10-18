@@ -487,21 +487,23 @@ class ChatRepository(
         // "会话真的没有内容"。
         if (frame.isSnapshot) {
             val snap = frame.snapshotObject()
-            val snapRows = snap?.get("rows").asArrayOrNull()?.size ?: -1
+            // 行数提取对齐 rowsWindowSchema：行数组在 rows.window（修复根因见
+            // ConversationReducer.rowsOrEmpty 注释），rows 直接是数组的旧形状兜底。
+            val snapRows = snap?.get("rows")?.let { r ->
+                (r as? JsonObject)?.get("window").asArrayOrNull()?.size
+                    ?: (r as? kotlinx.serialization.json.JsonArray)?.size
+            } ?: -1
             val currentRows = reducer.snapshot(sessionId).rows.size
-            // 诊断：记录每个快照帧的完整水位形状，定位 20:51:35 那类未触发防御的清空帧
-            ZLog.i(TAG, "snapshot frame: fromSeq=${frame.fromSeq} toSeq=${frame.toSeq} rows=$snapRows local=$currentRows keys=${snap?.keys}")
-            // 防御一（真机 20:34）：空快照清掉本地已有对话——拒绝应用
+            ZLog.i(TAG, "snapshot frame: fromSeq=${frame.fromSeq} toSeq=${frame.toSeq} rows=$snapRows local=$currentRows")
+            // 防御：快照带行（官方语义，尾部 60 行）时正常应用即可，历史已在其中。
+            // 零行快照且本地有内容：不应用（resync 瞬时空快照防御，20:34 现场）。
             if (snapRows == 0 && currentRows > 0) {
                 ZLog.w(TAG, "empty snapshot for non-empty session ($currentRows rows), ignore")
                 publish()
                 return
             }
-            // 防御二（真机 21:05「点进去没有之前的聊天内容」根因）：冷订阅 initial 快照
-            // **不含 rows 键**（rows=-1），toSeq=3066 说明服务端知道有历史——历史行不进
-            // 快照，服务端设计上走 conversationRowsRangeV4 分页拉取（桌面 loadOlder 语义），
-            // 手机端此前从未实现该 RPC。快照本身（seq/state 记账）照常应用，行表由
-            // [loadHistoryBackfill] 从 rowsRange 拉回后 seed 进 reducer。
+            // 「rows 缺失（-1）或零行 + 高水位」：服务端投影还没装载行（CLI 冷恢复中），
+            // 快照照常应用，行表由 rowsRange 回填兜底（21:35 现场就是这条路径）。
             if (snapRows <= 0 && frame.toSeq > 0L) {
                 val applied = reducer.apply(frame)
                 ZLog.d(TAG, "onFrame snapshot(no rows) applied=$applied, backfilling history via rowsRange")

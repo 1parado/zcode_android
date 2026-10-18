@@ -187,9 +187,26 @@ fun JsonObject.appendStringKey(key: String, append: String): JsonObject {
     return this + (key to kotlinx.serialization.json.JsonPrimitive(existing + append))
 }
 
-private fun JsonObject.rowsOrEmpty(): List<JsonObject> =
-    (this["rows"] as? kotlinx.serialization.json.JsonArray)
-        ?.mapNotNull { it as? JsonObject } ?: emptyList()
+/**
+ * 快照行提取（rowsWindowSchema）。
+ *
+ * 修复依据（真机 21:21-21:35 全程「看不到之前消息/发完只剩一条」根因）：wire 快照的
+ * rows 是 **rowsWindow 对象**（{window: [...], totalCount, firstRowId}，snapshot.ts:452），
+ * 行数组在 `window` 键里。旧实现把 rows 当数组解析，恒得 empty——**从首个版本起，
+ * 快照里的对话行一个都没被读过**，表现为：打开会话零行、发送后只有实时 delta 的那几行。
+ */
+private fun JsonObject.rowsOrEmpty(): List<JsonObject> {
+    // 新版形状：rows.window 数组
+    (this["rows"]?.asObjectOrNull())?.get("window")?.let { w ->
+        return (w as? kotlinx.serialization.json.JsonArray)
+            ?.mapNotNull { it as? JsonObject } ?: emptyList()
+    }
+    // 兼容旧形状：rows 直接是数组
+    (this["rows"] as? kotlinx.serialization.json.JsonArray)?.let { arr ->
+        return arr.mapNotNull { it as? JsonObject }
+    }
+    return emptyList()
+}
 
 // 简化引用：把 asObjectOrNull/asStringOrNull 引入本文件作用域
 private fun kotlinx.serialization.json.JsonElement?.asObjectOrNull(): JsonObject? = this as? JsonObject
