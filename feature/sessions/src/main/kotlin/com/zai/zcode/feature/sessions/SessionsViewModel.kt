@@ -38,15 +38,15 @@ class SessionsViewModel @Inject constructor(
         repository.sessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** 当前筛选（UI 可变，用 mutableStateOf 持有）。 */
-    var filter by mutableStateOf(SessionFilter.All)
-        private set
-    private val _filter = MutableStateFlow(SessionFilter.All)
-
-    /** 筛选 + 排序（需要你 > 运行中 > pinned > 时间倒序；排序逻辑在 [SessionsOrdering] 可单测）。 */
+    /**
+     * 会话列表（官方 sidebar 语义：无状态筛选 tabs——筛选由排序表达：
+     * 需要你 > 运行中 > pinned > 最近活动倒序，状态用行内指示器呈现）。
+     * 修复依据（用户报「全部/需要你/运行中没必要」+ 官方 workspace-grouped-tasks
+     * 无 tabs 的核对结果）。
+     */
     val sessions: StateFlow<List<SessionsRepository.SessionItem>> =
-        combine(allSessions, _filter) { list, f ->
-            SessionsOrdering.apply(list, f)
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        allSessions.map { list -> SessionsOrdering.apply(list, SessionFilter.All) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val connectionState: StateFlow<ZcodeConnection.State> =
         connection.state
@@ -87,11 +87,6 @@ class SessionsViewModel @Inject constructor(
                 if (ws != null) repository.setWorkspace(ws.path, ws.workspaceIdentity)
             }
         }
-    }
-
-    fun onFilterSelected(f: SessionFilter) {
-        filter = f
-        _filter.value = f
     }
 
     /** 打开会话：记录已读水位（未读消除）。 */

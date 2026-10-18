@@ -8,6 +8,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +33,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.core.design.ZcodeMotion
@@ -111,83 +115,97 @@ private fun InteractionCard(
     onSubmit: (interactionId: String, optionId: String?, freeText: String?) -> Unit,
 ) {
     val zc = LocalZcodeColors.current
-    Column(
+    // 左侧琥珀强调竖条：审批是远程操控最关键的一次点击，视觉权重必须高于
+    // 普通卡片——竖条是「需要你」的注意力手势，列表扫视时一眼定位。
+    Row(
         Modifier
             .fillMaxWidth()
-            .background(zc.card, ZcodeShape.card)
-            .padding(ZcodeSpacing.md),
+            .clip(ZcodeShape.card)
+            .background(zc.card),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.Rounded.Lock,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp),
-                tint = zc.attention,
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                when (item.kind) {
-                    "permission" -> "需要授权"
-                    "userInput" -> "需要你输入"
-                    else -> "需要确认"
-                },
-                style = ZcodeType.uiXs,
-                color = zc.attention,
-            )
-            item.toolName?.let {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(IntrinsicSize.Min)
+                .background(zc.attention),
+        )
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.md),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Rounded.Lock,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = zc.attention,
+                )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    it,
-                    style = ZcodeType.mono,
-                    color = zc.textTertiary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    when (item.kind) {
+                        "permission" -> "需要授权"
+                        "userInput" -> "需要你输入"
+                        else -> "需要确认"
+                    },
+                    style = ZcodeType.uiXs,
+                    color = zc.attention,
                 )
-            }
-        }
-
-        Spacer(Modifier.height(ZcodeSpacing.sm))
-        Text(item.prompt, style = ZcodeType.uiMd, color = zc.text)
-
-        if (item.options.isNotEmpty()) {
-            Spacer(Modifier.height(ZcodeSpacing.md))
-            // 选项按重要度纵向排列而不是挤成一排：手机上拇指点选，横向小按钮误触率高。
-            Column(verticalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm)) {
-                item.options.forEach { opt ->
-                    OptionButton(
-                        label = opt.label,
-                        primary = isAllowKind(opt.kind),
-                        enabled = !submitting,
-                        onClick = { onSubmit(item.interactionId, opt.optionId, null) },
+                item.toolName?.let {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        it,
+                        style = ZcodeType.mono,
+                        color = zc.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
             }
-        }
 
-        if (item.freeText) {
             Spacer(Modifier.height(ZcodeSpacing.sm))
-            FreeTextInput(
-                sensitive = item.sensitive,
-                enabled = !submitting,
-                onSubmit = { text -> onSubmit(item.interactionId, null, text) },
-            )
-        }
+            Text(item.prompt, style = ZcodeType.uiMd, color = zc.text)
 
-        // 服务端没给 options 也不收自由文本：旧 CLI 或形状不认识。
-        // 明确说"请在电脑端处理"，而不是渲染一排点不了/点错的按钮。
-        if (item.options.isEmpty() && !item.freeText) {
-            Spacer(Modifier.height(ZcodeSpacing.sm))
-            Text(
-                "这项确认的形状本版本还不支持，请在电脑端处理",
-                style = ZcodeType.uiXs,
-                color = zc.textTertiary,
-            )
-        }
+            if (item.options.isNotEmpty()) {
+                Spacer(Modifier.height(ZcodeSpacing.md))
+                // 选项纵向排列（拇指点选）；主按钮（allowOnce）实心琥珀、
+                // 其余描边——层级一眼可分，大权限选项绝不与主按钮同视觉权重。
+                Column(verticalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm)) {
+                    item.options.forEach { opt ->
+                        OptionButton(
+                            label = opt.label,
+                            primary = isAllowKind(opt.kind),
+                            enabled = !submitting,
+                            onClick = { onSubmit(item.interactionId, opt.optionId, null) },
+                        )
+                    }
+                }
+            }
 
-        if (submitting) {
-            Spacer(Modifier.height(ZcodeSpacing.sm))
-            Text("提交中…", style = ZcodeType.uiXs, color = zc.textTertiary)
+            if (item.freeText) {
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                FreeTextInput(
+                    sensitive = item.sensitive,
+                    enabled = !submitting,
+                    onSubmit = { text -> onSubmit(item.interactionId, null, text) },
+                )
+            }
+
+            // 服务端没给 options 也不收自由文本：旧 CLI 或形状不认识。
+            if (item.options.isEmpty() && !item.freeText) {
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                Text(
+                    "这项确认的形状本版本还不支持，请在电脑端处理",
+                    style = ZcodeType.uiXs,
+                    color = zc.textTertiary,
+                )
+            }
+
+            if (submitting) {
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                Text("提交中…", style = ZcodeType.uiXs, color = zc.textTertiary)
+            }
         }
     }
 }
@@ -220,8 +238,17 @@ private fun OptionButton(
             // 按压缩放让"按下了"在抬指前就被感知到。
             .jellyClickable(enabled = enabled, onClick = onClick, onClickLabel = label)
             .background(
-                color = if (primary) zc.attention else zc.input,
+                color = if (primary) zc.attention else Color.Transparent,
                 shape = RoundedCornerShape(10.dp),
+            )
+            // 非主按钮（拒绝/总是允许）描边：与主按钮实心琥珀形成明确层级
+            .then(
+                if (primary) Modifier
+                else Modifier.border(
+                    width = 1.dp,
+                    color = zc.border,
+                    shape = RoundedCornerShape(10.dp),
+                ),
             )
             .padding(horizontal = ZcodeSpacing.md, vertical = 12.dp),
         contentAlignment = Alignment.Center,

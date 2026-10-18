@@ -49,12 +49,10 @@ import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.DeviceChip
 import com.zai.zcode.core.design.components.EmptyState
-import com.zai.zcode.core.design.components.FilterChip
 import com.zai.zcode.core.network.stateLabel
 import com.zai.zcode.feature.sessions.SessionsOrdering
 import com.zai.zcode.feature.sessions.SessionsRepository
 import com.zai.zcode.feature.sessions.SessionsViewModel
-import com.zai.zcode.feature.sessions.SessionFilter
 import com.zai.zcode.feature.sessions.SessionsListState
 import java.time.LocalDate
 
@@ -73,7 +71,6 @@ fun SessionsScreen(
     val workspaces by viewModel.workspaces.collectAsState()
     val currentWorkspace by viewModel.currentWorkspace.collectAsState()
     var showWorkspacePicker by remember { mutableStateOf(false) }
-    val filter = viewModel.filter
     val creating = viewModel.creating
     val createError = viewModel.createError
     val zc = LocalZcodeColors.current
@@ -159,18 +156,16 @@ fun SessionsScreen(
             )
         }
 
-        // 筛选行：全部 / 需要你 / 运行中（与工作区卡拉开 vertical lg 间距）
+        // 官方 sidebar 无状态筛选 tabs（核对 workspace-grouped-tasks + 用户反馈
+        // 「全部/需要你/运行中没必要」）：需要你/运行中由排序与行内指示表达。
+        // 新建按钮右对齐单独一行。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = ZcodeSpacing.screenPadding)
                 .padding(top = ZcodeSpacing.lg, bottom = ZcodeSpacing.xs),
-            horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+            horizontalArrangement = Arrangement.End,
         ) {
-            SessionFilter.entries.forEach { f ->
-                FilterChip(label = f.label, selected = filter == f, onClick = { viewModel.onFilterSelected(f) })
-            }
-            Spacer(Modifier.weight(1f))
             // 修复依据（真机 v0.2.19「创建会话还是不行」）：「+」不再直接建空会话。
             // 空会话是服务端 draft（纯内存、不落盘、不进任务索引），建了也看不见；
             // 改为进入草稿页，由用户首条消息真正创建。
