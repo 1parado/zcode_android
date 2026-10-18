@@ -104,11 +104,13 @@ fun SessionsScreen(
             }
         }
 
-        // 工作区选择卡：整行可点，48dp 高，箭头示意可换
+        // 工作区选择卡：整行可点，48dp 高，箭头示意可换。
+        // 与下方筛选行留一个 lg 间距（用户截图反馈两者贴在一起）。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = ZcodeSpacing.screenPadding)
+                .padding(top = ZcodeSpacing.xs)
                 .clip(ZcodeShape.card)
                 .background(zc.card)
                 .clickable { showWorkspacePicker = true }
@@ -154,11 +156,12 @@ fun SessionsScreen(
             )
         }
 
-        // 筛选行：全部 / 需要你 / 运行中
+        // 筛选行：全部 / 需要你 / 运行中（与工作区卡拉开 vertical lg 间距）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ZcodeSpacing.screenPadding),
+                .padding(horizontal = ZcodeSpacing.screenPadding)
+                .padding(top = ZcodeSpacing.lg, bottom = ZcodeSpacing.xs),
             horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
         ) {
             SessionFilter.entries.forEach { f ->

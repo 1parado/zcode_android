@@ -81,10 +81,11 @@ fun ChatScreen(
 
     // 是否已停在底部：决定「跟随新内容」还是「累计未读」。
     // derivedStateOf 让它只在跨越阈值时变，滚动过程中不触发额外重组。
+    // 阈值 -1：头部 history_header 占一个 index，最后一行是 totalItemsCount-2。
     val atBottom by remember {
         derivedStateOf {
             val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
-            last == null || last.index >= listState.layoutInfo.totalItemsCount - 2
+            last == null || last.index >= listState.layoutInfo.totalItemsCount - 1
         }
     }
     var pendingCount by remember { mutableIntStateOf(0) }
@@ -94,7 +95,8 @@ fun ChatScreen(
     LaunchedEffect(ui.rows.size) {
         if (ui.rows.isEmpty()) return@LaunchedEffect
         if (atBottom) {
-            listState.scrollToItem(ui.rows.size - 1)
+            // +1：头部 history_header 占一个 index（见 atBottom 注释）
+            listState.scrollToItem(ui.rows.size)
         } else if (ui.rows.size > settledCount) {
             // 修复依据（spec §5.3）：用户在翻历史时不把视图拽走，改为累计未读数
             pendingCount += ui.rows.size - settledCount
@@ -167,7 +169,10 @@ fun ChatScreen(
                     .jellyClickable(
                         onClick = {
                             scope.launch {
-                                listState.scrollToItem(ui.rows.size - 1)
+                                // 修复依据（用户报「点了不到底部」）：列表头部有 history_header
+                                // 项，行索引整体 +1，最后一行的 index 是 rows.size 而非
+                                // rows.size-1——旧落点差一行，atBottom 阈值判定也跟着错位。
+                                listState.scrollToItem(ui.rows.size)
                                 pendingCount = 0
                             }
                         },
