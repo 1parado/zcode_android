@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.network.RelayConnectionParams
-import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.feature.connect.ConnectViewModel
 
 /**
@@ -164,16 +163,6 @@ fun ConnectScreen(
             CircularProgressIndicator()
         }
     }
-}
-
-/** 状态标签（会话列表顶栏等复用）：连接机状态 → 简短中文。 */
-fun stateLabel(state: ZcodeConnection.State): String = when (state) {
-    is ZcodeConnection.State.Ready -> "已连接"
-    is ZcodeConnection.State.Discovering -> "发现服务…"
-    is ZcodeConnection.State.ConnectingWs -> "建立连接…"
-    is ZcodeConnection.State.Handshaking -> "握手…"
-    is ZcodeConnection.State.Failed -> "重连中…"
-    ZcodeConnection.State.Disconnected -> "未连接"
 }
 
 /**

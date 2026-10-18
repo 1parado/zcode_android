@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 // 修复依据（CI run 62）：buildJsonObject 内的 put(String, String) 来自 kotlinx.serialization
@@ -55,6 +54,9 @@ private val SUBSCRIBE_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 15_000L, 30_
  * 让用户对着骨架屏等下去。给 8s 而不是 2s：relay 链路 + 桌面冷启动读盘的往返需要这个量级。
  */
 private const val SNAPSHOT_GRACE_MS = 8_000L
+
+/** 顶栏标题截断长度：一行宽，超出的部分交给 Text 的 Ellipsis。 */
+private const val TITLE_MAX_CHARS = 60
 
 /**
  * 会话页加载态：区分「还没加载出来」与「这个会话是空的」。
@@ -207,6 +209,15 @@ class ChatRepository(
          * 这是远程操控最核心的一块屏幕——列表为空则不渲染 Dock。
          */
         val pendingInteractions: List<PendingInteraction> = emptyList(),
+        /**
+         * 会话标题（state.meta.title，snapshot.ts sessionMetaStateSchema）。
+         * null = 服务端还没给标题且本地也推不出来，UI 显示占位而不是编一个。
+         *
+         * 修复依据（真机 v0.2.21「不知道自己在看哪个会话」）：顶栏原先只有「返回 /
+         * 看电脑」两个按钮，从列表点进来之后屏幕上没有任何东西指明这是哪个会话——
+         * 一次点错要滑到底部靠内容辨认。标题是会话页最便宜的方位感。
+         */
+        val title: String? = null,
     )
 
     /**
@@ -538,7 +549,35 @@ class ChatRepository(
             isRunning = st.state?.get("phase").asStringOrNull()
                 ?.let { it == "draft" || it == "prewarming" || it == "running" } == true,
             pendingInteractions = projectPendingInteractions(st.state),
+            title = projectTitle(st.state, st.rows),
         )
+    }
+
+    /**
+     * 展示标题：优先 state.meta.title，取不到时退回首条用户输入。
+     *
+     * 两段降级是必要的而不是冗余：
+     * 1. `meta.title` 由桌面端生成或用户改名写入（titleSource: generated|custom），
+     *    新会话在首轮结束前它是空串——此时顶栏不能显示空白。
+     * 2. 退回首条用户输入而非「新会话」：远程操控场景里用户是靠"我刚才说的那句"
+     *    认会话的，用户自己的第一句话比任何占位文案都更像标题。
+     * 3. 两者都没有（还在 Loading / 桌面没起）就返回 null，让 UI 显示占位，
+     *    不编造内容——编造的标题比没有标题更容易误导。
+     *
+     * 截断到 60 字：用户常常一次贴几十行输入，整段进 StateFlow 会让顶栏在流式过程中
+     * 每帧重组一次，而它只有一行宽（Text 自身还会 Ellipsis）。
+     */
+    private fun projectTitle(state: JsonObject?, rows: List<JsonObject>): String? {
+        val fromMeta = state?.get("meta").asObjectOrNull()
+            ?.get("title").asStringOrNull()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (fromMeta != null) return fromMeta.take(TITLE_MAX_CHARS)
+        val firstUser = rows.firstOrNull { RowView(it).kind == "userInput" }
+            ?.let { RowView(it).text }
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        return firstUser?.replace('\n', ' ')?.take(TITLE_MAX_CHARS)
     }
 
     /**

@@ -33,9 +33,9 @@ dependencies {
     implementation(project(":core:network"))
     implementation(project(":core:protocol"))
     implementation(project(":core:design"))
-    // 修复 CI Unresolved：SessionsScreen 复用 connect 模块的 stateLabel（连接状态中文标签），
-    // connect 不依赖 sessions，此方向无环
-    implementation(project(":feature:connect"))
+    // 修复依据（v0.2.21）：stateLabel 已下沉到 core:network（它描述的是连接机的状态，
+    // 不是连接页的私产），chat / sessions / connect 三处共用同一份文案；原先为此依赖
+    // :feature:connect 会把 CameraX + MLKit 拖进只想要一行文案的模块。
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.runtime.compose)

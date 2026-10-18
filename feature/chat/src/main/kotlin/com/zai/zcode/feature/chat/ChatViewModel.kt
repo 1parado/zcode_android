@@ -11,6 +11,8 @@ import com.zai.zcode.core.network.ZcodeConnection
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -54,6 +56,25 @@ class ChatViewModel @Inject constructor(
     fun retrySubscribe() {
         repository.retrySubscribe()
     }
+
+    /**
+     * 会话标题（[ChatRepository.ChatUi.title]）。null = 服务端没给且本地推不出来。
+     *
+     * 单独一条流而不是让 UI 从 [ui] 里取：标题在流式过程中几乎不变，而 [ui] 每帧
+     * 都是新对象——不加区分地订阅会让顶栏跟着每一行 token 一起重组。
+     */
+    val title: StateFlow<String?> =
+        repository.ui
+            .map { it.title }
+            .distinctUntilChanged()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * 连接态。会话页此前完全不看它：断线时屏幕上唯一的线索是"内容不再增长"，
+     * 用户会读成模型卡住而不是网络断了。顶栏在非 Ready 时显示一行状态文案。
+     */
+    val connectionState: StateFlow<ZcodeConnection.State> =
+        connection.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), connection.state.value)
 
     /** 草稿与发送态（UI 局部状态，不入协议层）。 */
     var draft by mutableStateOf("")

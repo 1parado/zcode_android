@@ -43,6 +43,24 @@ import java.util.concurrent.atomic.AtomicReference
 private const val TAG = "ZcodeConnection"
 
 /**
+ * 连接机状态 → 简短中文标签。
+ *
+ * 放在 core:network 而不是某个 feature：它描述的是 [ZcodeConnection.State] 本身，
+ * 而连接页、任务列表、会话页三处都要用同一套说法——同一件事在不同页面换一种叫法，
+ * 用户会以为是两个不同的问题（曾经会话页完全不显示连接态，断线只能靠"内容不动了"
+ * 猜，被读成模型卡住）。feature 之间为这一个函数互相依赖（chat → connect）会把
+ * CameraX/MLKit 拖进会话页的依赖图，所以归到状态机所在模块。
+ */
+fun stateLabel(state: ZcodeConnection.State): String = when (state) {
+    is ZcodeConnection.State.Ready -> "已连接"
+    is ZcodeConnection.State.Discovering -> "发现服务…"
+    is ZcodeConnection.State.ConnectingWs -> "建立连接…"
+    is ZcodeConnection.State.Handshaking -> "握手…"
+    is ZcodeConnection.State.Failed -> "重连中…"
+    ZcodeConnection.State.Disconnected -> "未连接"
+}
+
+/**
  * 到 ZCode server 的连接（状态机所有者）：
  *
  * ```

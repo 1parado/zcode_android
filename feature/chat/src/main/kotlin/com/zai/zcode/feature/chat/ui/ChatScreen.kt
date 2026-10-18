@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -27,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,7 +47,11 @@ import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.EmptyState
+import com.zai.zcode.core.design.components.LiveDot
+import com.zai.zcode.core.design.components.ZcodeStatus
 import com.zai.zcode.core.design.jellyClickable
+import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.network.stateLabel
 import com.zai.zcode.feature.chat.ChatLoadState
 import com.zai.zcode.feature.chat.ChatRepository
 import com.zai.zcode.feature.chat.ChatViewModel
@@ -65,6 +71,11 @@ fun ChatScreen(
     // 修复依据（真机 v0.2.20「会话页一直转圈」）：光有 rows 无法区分「在读」
     // 与「打开了一个还没有内容的会话」，必须把加载态和列表一起看。
     val loadState by viewModel.loadState.collectAsState()
+    // 修复依据（真机 v0.2.21「不知道自己在看哪个会话」）：顶栏要显示会话标题，
+    // 以及"电脑端断开了"这件事——会话页此前完全不看连接态，断线时唯一的线索是
+    // 内容不再增长，用户会以为是模型卡住了。
+    val title by viewModel.title.collectAsState()
+    val connState by viewModel.connectionState.collectAsState()
     val listState = rememberLazyListState()
     val zc = LocalZcodeColors.current
 
@@ -97,7 +108,13 @@ fun ChatScreen(
 
     Box(Modifier.fillMaxSize().imePadding()) {
         Column(Modifier.fillMaxSize()) {
-            ChatTopBar(onBack = onBack, onWatchScreen = onWatchScreen)
+            ChatTopBar(
+                title = title,
+                connState = connState,
+                isRunning = ui.isRunning,
+                onBack = onBack,
+                onWatchScreen = onWatchScreen,
+            )
             ChatRowList(
                 rows = ui.rows,
                 listState = listState,
@@ -143,14 +160,70 @@ fun ChatScreen(
     }
 }
 
+/**
+ * 会话顶栏：返回 / 会话标题 + 连接态 / 看电脑。
+ *
+ * 修复依据（真机 v0.2.21「不知道自己在看哪个会话」）：原先这一行只有两个 TextButton，
+ * 从列表点进来之后屏幕上没有任何东西指明正在看哪个会话——点错一次要滑到底部靠内容
+ * 辨认。标题在中间偏左、单行 Ellipsis，是会话页最便宜的方位感。
+ *
+ * 标题下方（同一行的副标题位置）放状态而不是另一行：断线时如果不说，用户唯一的
+ * 线索是"内容不再增长"，会误判成模型卡住。复用列表页同一套 [stateLabel] 文案，
+ * 两页对同一件事用同一种说法。
+ *
+ * 状态行三选一，且多数时候不存在：断线（attention 色，要处理）> 运行中（带呼吸点，
+ * 回答"电脑在不在干活"）> 什么都不显示。常态安静、异常才出声，顶栏才不会变成
+ * 一条永远占两行的横幅。
+ */
 @Composable
-private fun ChatTopBar(onBack: () -> Unit, onWatchScreen: () -> Unit) {
+private fun ChatTopBar(
+    title: String?,
+    connState: ZcodeConnection.State,
+    isRunning: Boolean,
+    onBack: () -> Unit,
+    onWatchScreen: () -> Unit,
+) {
+    val zc = LocalZcodeColors.current
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = ZcodeSpacing.sm, vertical = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ZcodeSpacing.sm, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TextButton(onClick = onBack) { Text("‹ 返回", style = ZcodeType.uiSm) }
-        Box(Modifier.weight(1f))
+        // 标题区吃掉剩余宽度：返回/看电脑是固定短按钮，标题才是会变长的那个。
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = ZcodeSpacing.xs),
+        ) {
+            Text(
+                // 没有标题（还没读出来 / 桌面没起）时显示占位而不是「新会话」：
+                // 那是编造内容，用户会以为自己真的建了一个叫这个名字的会话。
+                title ?: "…",
+                style = ZcodeType.uiMd,
+                color = if (title == null) zc.textTertiary else zc.text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // 只在"有事"时占用这一行：已连接且空闲是最常见的状态，为它画一行副标题
+            // 等于让顶栏永远多占 14sp。异常才值得占地方。
+            if (connState !is ZcodeConnection.State.Ready) {
+                Text(
+                    stateLabel(connState),
+                    style = ZcodeType.uiXs,
+                    color = zc.attention,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else if (isRunning) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LiveDot(ZcodeStatus.Running)
+                    Spacer(Modifier.width(6.dp))
+                    Text("运行中", style = ZcodeType.uiXs, color = zc.textTertiary)
+                }
+            }
+        }
         TextButton(onClick = onWatchScreen) { Text("看电脑", style = ZcodeType.uiSm) }
     }
 }

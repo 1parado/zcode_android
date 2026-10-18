@@ -43,7 +43,7 @@ import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.DeviceChip
 import com.zai.zcode.core.design.components.EmptyState
 import com.zai.zcode.core.design.components.FilterChip
-import com.zai.zcode.feature.connect.ui.stateLabel
+import com.zai.zcode.core.network.stateLabel
 import com.zai.zcode.feature.sessions.SessionsOrdering
 import com.zai.zcode.feature.sessions.SessionsRepository
 import com.zai.zcode.feature.sessions.SessionsViewModel
