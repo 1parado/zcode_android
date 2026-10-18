@@ -34,6 +34,15 @@ object V4 {
      * taskListMembershipSets.ts:217 都以 listTasks 为列表左表，sessions-index 只做富化。
      */
     const val CHANNEL_ZCODE_TASK = "zcode-task"
+
+    /**
+     * 模型选择通道（channels.ts:126 ModelSelection: "model-selection"）。
+     * 官方手机端模型选择器走此通道 getView() 拉可用 provider/model 列表
+     * （providerFacadeServices.ts:97），切换用 sendConversationCommandV4 的
+     * switchModelConfig 命令（command.ts:251 {provider, model, thought}）。
+     */
+    const val CHANNEL_MODEL_SELECTION = "model-selection"
+    const val METHOD_MODEL_SELECTION_VIEW = "getView"
     const val METHOD_LIST_TASKS = "listTasks"
     const val METHOD_LIST_PINNED_TASKS = "listPinnedTasks"
     const val METHOD_LIST_ARCHIVED_TASKS = "listArchivedTasks"

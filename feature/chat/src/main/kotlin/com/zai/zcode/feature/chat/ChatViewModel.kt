@@ -53,6 +53,36 @@ class ChatViewModel @Inject constructor(
         repository.loadOlder()
     }
 
+    // ── 模型选择 ──
+
+    /** 可选模型列表（懒加载一次；选择器打开时才拉取）。 */
+    var modelOptions by mutableStateOf<List<ChatRepository.ModelOption>>(emptyList())
+        private set
+    var currentModel by mutableStateOf<ChatRepository.ModelOption?>(null)
+        private set
+    var modelLoading by mutableStateOf(false)
+        private set
+
+    /** 打开选择器时拉取列表 + 当前选中。 */
+    fun openModelPicker() {
+        if (modelLoading) return
+        modelLoading = true
+        viewModelScope.launch {
+            val options = repository.loadModelOptions()
+            modelOptions = options
+            currentModel = repository.loadCurrentSelection()
+            modelLoading = false
+        }
+    }
+
+    /** 选中一个模型：切换命令成功后乐观更新本地选中。 */
+    fun selectModel(option: ChatRepository.ModelOption) {
+        viewModelScope.launch {
+            val ok = repository.switchModel(option.providerId, option.modelId)
+            if (ok) currentModel = option
+        }
+    }
+
     /**
      * 会话加载态：区分「在等」/「电脑端 runtime 没起来」/「读不出来」。
      * 与 [ui] 分离是因为「零行」有两种截然不同的含义：会话真的还没有内容，

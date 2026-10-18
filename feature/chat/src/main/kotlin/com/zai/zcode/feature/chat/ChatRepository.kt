@@ -581,6 +581,65 @@ class ChatRepository(
     private val _hasMoreHistory = MutableStateFlow(true)
     val hasMoreHistory: StateFlow<Boolean> = _hasMoreHistory.asStateFlow()
 
+    // ── 模型选择（官方 mobile 语义：model-selection.getView + switchModelConfig）──
+
+    /** 可选模型扁平列表（provider × model），null = 读取失败（UI 显示不可选）。 */
+    suspend fun loadModelOptions(): List<ModelOption> {
+        val p = connection.protocol.value ?: return emptyList()
+        return runCatching {
+            val view = p.modelSelectionView() ?: return emptyList()
+            view.providers.flatMap { provider ->
+                provider.models.map { m ->
+                    ModelOption(
+                        providerId = provider.providerId,
+                        providerName = provider.providerName,
+                        modelId = m.modelId,
+                        label = if (provider.providerName.isBlank()) m.name else "${provider.providerName} · ${m.name}",
+                    )
+                }
+            }
+        }.getOrElse {
+            ZLog.w(TAG, "model selection view failed: ${it.message}")
+            emptyList()
+        }
+    }
+
+    /** 当前选中（preferredSelection）；读取失败返回 null（UI 显示默认）。 */
+    suspend fun loadCurrentSelection(): ModelOption? {
+        val p = connection.protocol.value ?: return null
+        return runCatching {
+            val view = p.modelSelectionView() ?: return null
+            val sel = view.preferred ?: return null
+            ModelOption(sel.providerId, "", sel.modelId, sel.modelId)
+        }.getOrElse { null }
+    }
+
+    /** 切换本会话模型（switchModelConfig；thought 沿用官方必填形状，默认 medium）。 */
+    suspend fun switchModel(providerId: String, modelId: String): Boolean {
+        val p = connection.protocol.value ?: return false
+        return runCatching {
+            val ack = p.switchModel(
+                workspacePath = workspacePath,
+                sessionId = sessionId,
+                provider = providerId,
+                model = modelId,
+                workspaceIdentity = workspaceIdentity,
+            )
+            ack.status == "accepted"
+        }.getOrElse {
+            ZLog.w(TAG, "switchModel failed: ${it.message}")
+            false
+        }
+    }
+
+    /** 一个可选模型项（选择器列表行）。 */
+    data class ModelOption(
+        val providerId: String,
+        val providerName: String,
+        val modelId: String,
+        val label: String,
+    )
+
     /**
      * seq 空洞 → resyncConversationV4 整表重放（[ConversationReducer.onSeqGap]）。
      * 单飞：同一时刻只跑一次，失败后由下一帧空洞或看门狗再触发。

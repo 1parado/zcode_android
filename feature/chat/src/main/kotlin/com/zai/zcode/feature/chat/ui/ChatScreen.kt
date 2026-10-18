@@ -20,9 +20,12 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DesktopWindows
+import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -34,6 +37,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -79,6 +83,8 @@ fun ChatScreen(
     val connState by viewModel.connectionState.collectAsState()
     val listState = rememberLazyListState()
     val zc = LocalZcodeColors.current
+    // 模型选择弹层（官方 mobile composer 的模型选择入口语义）
+    var showModelPicker by remember { mutableStateOf(false) }
 
     // 是否已停在底部：决定「跟随新内容」还是「累计未读」。
     // derivedStateOf 让它只在跨越阈值时变，滚动过程中不触发额外重组。
@@ -128,7 +134,14 @@ fun ChatScreen(
                 isRunning = ui.isRunning,
                 onBack = onBack,
                 onWatchScreen = onWatchScreen,
+                onPickModel = { showModelPicker = true },
             )
+            if (showModelPicker) {
+                ModelPickerSheet(
+                    viewModel = viewModel,
+                    onDismiss = { showModelPicker = false },
+                )
+            }
             ChatRowList(
                 rows = ui.rows,
                 listState = listState,
@@ -232,6 +245,7 @@ private fun ChatTopBar(
     isRunning: Boolean,
     onBack: () -> Unit,
     onWatchScreen: () -> Unit,
+    onPickModel: () -> Unit,
 ) {
     val zc = LocalZcodeColors.current
     Row(
@@ -277,13 +291,90 @@ private fun ChatTopBar(
                 }
             }
         }
-        // 看电脑：48dp 图标钮（显示器图标），带文字标签辅助识别
+        // 模型选择入口（官方 mobile composer 语义）：48dp 图标钮
+        IconButton(onClick = onPickModel) {
+            Icon(
+                Icons.Rounded.Memory,
+                contentDescription = "选择模型",
+                tint = zc.text,
+            )
+        }
+        // 看电脑：48dp 图标钮（显示器图标）
         IconButton(onClick = onWatchScreen) {
             Icon(
                 Icons.Rounded.DesktopWindows,
                 contentDescription = "看电脑",
                 tint = zc.text,
             )
+        }
+    }
+}
+
+/**
+ * 模型选择弹层：打开时拉取 model-selection.getView，点选后发 switchModelConfig。
+ * 对齐官方 mobile 模型选择器（provider · model 两级扁平成一列，当前选中打勾）。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelPickerSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    LaunchedEffect(Unit) { viewModel.openModelPicker() }
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = ZcodeSpacing.screenPadding)) {
+            Text("选择模型", style = ZcodeType.uiLg, color = zc.text)
+            Spacer(Modifier.height(ZcodeSpacing.sm))
+            when {
+                viewModel.modelLoading -> Text(
+                    "正在读取可用模型…",
+                    style = ZcodeType.uiSm,
+                    color = zc.textTertiary,
+                    modifier = Modifier.padding(vertical = ZcodeSpacing.lg),
+                )
+                viewModel.modelOptions.isEmpty() -> Text(
+                    "没有读到可用模型（电脑端 provider 未配置）",
+                    style = ZcodeType.uiSm,
+                    color = zc.textTertiary,
+                    modifier = Modifier.padding(vertical = ZcodeSpacing.lg),
+                )
+                else -> androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(viewModel.modelOptions.size) { index ->
+                        val option = viewModel.modelOptions[index]
+                        val selected = viewModel.currentModel?.modelId == option.modelId &&
+                            viewModel.currentModel?.providerId == option.providerId
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(ZcodeShape.control)
+                                .then(
+                                    if (selected) Modifier.background(zc.panel)
+                                    else Modifier
+                                )
+                                .clickable {
+                                    viewModel.selectModel(option)
+                                    onDismiss()
+                                }
+                                .padding(horizontal = ZcodeSpacing.md, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(option.label, style = ZcodeType.uiMd, color = zc.text)
+                            }
+                            if (selected) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = "当前模型",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = zc.running,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(ZcodeSpacing.lg))
         }
     }
 }

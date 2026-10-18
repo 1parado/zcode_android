@@ -513,6 +513,75 @@ class ZcodeProtocolV4(
         val hasMore: Boolean = raw["hasMore"] == kotlinx.serialization.json.JsonPrimitive(true)
     }
 
+    /**
+     * 读模型选择视图（model-selection 通道 getView）。
+     * 官方手机端模型选择器的数据源：providers[].models[] 扁平出可选项，
+     * preferredSelection 是当前选中（官方 preferredSelection {providerId, modelId, thoughtLevel?}）。
+     */
+    suspend fun modelSelectionView(timeoutMs: Long = 15_000): ModelSelectionView? {
+        val result = channel.request(V4.CHANNEL_MODEL_SELECTION, V4.METHOD_MODEL_SELECTION_VIEW, null, timeoutMs)
+        val obj = result as? JsonObject ?: return null
+        return ModelSelectionView(obj)
+    }
+
+    /**
+     * 切换会话模型（switchModelConfig 命令，command.ts:251）。
+     * @param thought 思考档位（zod schema 必填；官方 thought_level 三档，沿用当前值时传 "medium"）
+     */
+    suspend fun switchModel(
+        workspacePath: String,
+        sessionId: String?,
+        provider: String,
+        model: String,
+        thought: String = "medium",
+        workspaceIdentity: String? = null,
+    ): CommandAck {
+        val envelope = buildCommandEnvelope(
+            commandId = java.util.UUID.randomUUID().toString(),
+            clientId = clientId,
+            sessionId = sessionId,
+            type = "switchModelConfig",
+            payload = buildJsonObject {
+                put("provider", provider)
+                put("model", model)
+                put("thought", thought)
+            },
+        )
+        return sendCommand(workspacePath, envelope, workspaceIdentity, timeoutMs = 30_000)
+    }
+
+    /** ModelSelectionView 投影（providerFacadeServices.ts ModelSelectionView 子集）。 */
+    class ModelSelectionView(raw: JsonObject) {
+        val providers: List<ProviderEntry> =
+            (raw["providers"] as? JsonArray)?.mapNotNull { el ->
+                (el as? JsonObject)?.let { ProviderEntry(it) }
+            } ?: emptyList()
+        val preferred: Selection? = (raw["preferredSelection"] as? JsonObject)?.let { Selection(it) }
+    }
+
+    class ProviderEntry(raw: JsonObject) {
+        val providerId: String = raw["providerId"].asStringOrNull() ?: ""
+        val providerName: String = raw["providerName"].asStringOrNull() ?: raw["providerId"].asStringOrNull() ?: ""
+        val models: List<ModelEntry> =
+            (raw["models"] as? JsonArray)?.mapNotNull { el ->
+                (el as? JsonObject)?.let { ModelEntry(it) }
+            } ?: emptyList()
+    }
+
+    class ModelEntry(raw: JsonObject) {
+        val modelId: String = raw["modelId"].asStringOrNull() ?: ""
+        val name: String =
+            // RegistryModelConfigObject 的展示名：displayName/name 缺席时用 modelId
+            raw["displayName"].asStringOrNull()
+                ?: raw["name"].asStringOrNull()
+                ?: raw["modelId"].asStringOrNull() ?: ""
+    }
+
+    class Selection(raw: JsonObject) {
+        val providerId: String = raw["providerId"].asStringOrNull() ?: ""
+        val modelId: String = raw["modelId"].asStringOrNull() ?: ""
+    }
+
     private fun resultAsObject(result: Any?): JsonObject {
         // 修复依据（P1-6）：非对象结果原来静默变成空 JsonObject，SubscribeAck 全 null 无日志。
         return result as? JsonObject ?: run {
