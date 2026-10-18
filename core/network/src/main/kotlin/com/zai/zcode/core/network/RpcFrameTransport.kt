@@ -67,8 +67,12 @@ class RpcFrameTransport(
             val out = ByteArray(messageBytes)
             var offset = 0
             for (f in fragments) {
-                f?.copyInto(out, offset)
-                offset += f!!.size
+                // isComplete 仅在所有分片都写入后成立(received 只在写入非 null 分片时自增),
+                // 槽位不应为 null。若出现 null 说明重组合不变式被破坏,直接报错而非静默错位
+                // 产出损坏数据(评审 Finding #6)。
+                val piece = f ?: throw IllegalStateException("rpc-frame 重组槽位缺失 @$offset")
+                piece.copyInto(out, offset)
+                offset += piece.size
             }
             return out
         }
@@ -185,7 +189,12 @@ class RpcFrameTransport(
             val message = assembly.assemble()
             if (message.size != assembly.messageBytes) {
                 ZLog.w(TAG, "message $ms size mismatch")
-            } else if (assembly.checksum == null || crc32WireBytes(message) == assembly.checksum) {
+            } else if (assembly.checksum == null) {
+                // 修复依据(评审 Finding #3):本端发送方恒带 crc32 checksum,缺失即非本端协议
+                // 的帧或中继篡改,不得免校验放行——那会让分片完整性保护形同虚设,损坏/被
+                // 篡改的物理帧直通到 V4 解析层造成静默数据损坏。
+                ZLog.w(TAG, "message $ms dropped: missing checksum")
+            } else if (crc32WireBytes(message) == assembly.checksum) {
                 // 修复依据(真机 v0.2.13"订阅 ACK 成功但会话列表空"):原实现用
                 // scope.launch { _messages.emit(...) } 投递重组结果——launch 不保序,
                 // 多个 rpc-frame 几乎同时重组完成时帧序会被打乱。V4 帧靠 (fromSeq,toSeq]

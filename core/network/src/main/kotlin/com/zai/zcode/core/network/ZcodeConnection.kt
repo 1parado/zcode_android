@@ -700,9 +700,11 @@ class ZcodeConnection(
             val info = _serverInfo.value ?: return@withLock
             if (_currentWorkspace.value?.path == workspace.path) return@withLock
             _currentWorkspace.value = workspace
-            _protocol.value = null
             if (desiredRelay != null) {
-                // relay：重开 bridge（openBridge 内部会作废旧 bridge 并发布新 protocol）
+                // relay：重开 bridge（openBridge 内部会作废旧 bridge 并发布新 protocol）。
+                // 先置空 _protocol，让旧 protocol 的订阅者先走 onProtocolClosed；新 bridge 就绪后
+                // 由全新 protocol 实例触发 repository 重订阅（实例已变会正常重发）。
+                _protocol.value = null
                 try {
                     openBridge(workspace)
                 } catch (e: Exception) {
@@ -711,9 +713,13 @@ class ZcodeConnection(
                     scope.launch { recoverBridge() }
                 }
             } else {
+                // 局域网直连：单 server 多 workspace，protocol 实例不变，只需更新事件 fan-out
+                // 范围（attachFrameListener）。绝不可把 _protocol.value 置 null——那会让 repository
+                // 的 protocol.collect 收到 null 走 onProtocolClosed 清空订阅记账，而实例未变 +
+                // StateFlow 同引用重赋值不重新派发，切换后列表/会话永久卡在加载态（评审 Finding #1）。
+                // repository 重订阅由 _currentWorkspace 变化驱动（SessionsRepository.setWorkspace
+                // 经 SessionsViewModel.currentWorkspace.collect 调用），此处无需重发 protocol。
                 _protocol.value?.attachFrameListener(workspace.path, identityFor(workspace))
-                // protocol 实例未变，Repository 需要显式触发：重发 protocol 值让订阅方重跑
-                _protocol.value = _protocol.value
             }
             _state.value = State.Ready(info)
             relayClient?.sendPayload(buildJsonObject {

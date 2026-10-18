@@ -3,6 +3,8 @@ package com.zai.zcode.core.protocol.v4
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.protocol.rpc.ChannelClient
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,11 +86,20 @@ class ZcodeProtocolV4(
     @Volatile
     private var boundWorkspaceIdentity: String? = null
 
+    /**
+     * 协议自有作用域。init 的两条常驻 collect 协程挂在它上面，[close] 时整体取消，
+     * 不被外部共享 [scope] 的生命周期拖住（relay bridge 频繁重开时旧 protocol 的协程
+     * 会泄漏，评审 Finding #2）。
+     */
+    private val job = SupervisorJob()
+    private val ownScope = CoroutineScope(scope.coroutineContext + job)
+
     init {
         // ChannelClient EVENT_FIRE → wire 帧。payload 是单个 wire 帧的 JsonObject。
         // 修复依据（P0-4）：sessions-index 帧走 onDynamicSessionsIndexFrame 独立事件，
         // 原实现只 collect conversation 事件导致 sessions-index 永远收不到帧。
-        scope.launch {
+        // 修复依据（评审 Finding #2）：挂在 ownScope 而非外部 scope，close() 时随 job 取消。
+        ownScope.launch {
             channel.events.collect { event ->
                 // 修复依据(真机 v0.2.12"零帧"):桌面 EventFire header 不含事件名
                 // (channelServer.ts 只发 [204, id]),event 为 null 是常态。此处按
@@ -100,7 +111,8 @@ class ZcodeProtocolV4(
             }
         }
         // 连接断开（IDLE 之外进入 CLOSED）时清装配状态与监听记账。
-        scope.launch {
+        // 修复依据（评审 Finding #2）：挂在 ownScope，close() 时随 job 取消。
+        ownScope.launch {
             channel.state.collect { state ->
                 if (state == ChannelClient.State.CLOSED) {
                     assembler.reset()
@@ -428,6 +440,9 @@ class ZcodeProtocolV4(
     fun close() {
         detachFrameListener()
         assembler.reset()
+        // 修复依据（评审 Finding #2）：取消协议自有作用域，回收 init 启动的两条常驻协程，
+        // 否则 relay bridge 重开时旧 protocol 的协程随外部 scope 长留（泄漏）。
+        job.cancel()
         // 修复依据（P3）：close 须清空回调，避免重建连接时旧回调"忘记接线"或重复触发。
         onConversationFrame = null
         onSessionsIndexFrame = null
