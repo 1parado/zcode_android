@@ -2,6 +2,7 @@ package com.zai.zcode.feature.chat
 
 import com.zai.zcode.core.common.ZLog
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.rpc.PromiseErrorException
 import com.zai.zcode.core.protocol.rpc.asArrayOrNull
 import com.zai.zcode.core.protocol.rpc.asBooleanOrNull
 import com.zai.zcode.core.protocol.rpc.asLongOrNull
@@ -9,8 +10,10 @@ import com.zai.zcode.core.protocol.rpc.asObjectOrNull
 import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import com.zai.zcode.core.protocol.v4.RowView
 import com.zai.zcode.core.protocol.v4.TopicFrame
+import com.zai.zcode.core.protocol.v4.V4
 import com.zai.zcode.core.protocol.v4.ZcodeProtocolV4
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +39,48 @@ private const val TAG = "ChatRepository"
  */
 private const val WATCHDOG_PERIOD_MS = 10_000L
 private const val WATCHDOG_QUIET_MS = 20_000L
+
+/**
+ * 会话订阅退避阶梯（末位即稳态间隔）。
+ * 与 [com.zai.zcode.feature.sessions.SessionsRepository] 同一组量级：runtime 冷启动
+ * 常见耗时在 10s 量级，间隔拉到 60s 时才算进入"慢慢等"。
+ */
+private val SUBSCRIBE_RETRY_DELAYS_MS = longArrayOf(2_000L, 5_000L, 15_000L, 30_000L, 60_000L)
+
+/**
+ * ACK 之后等首帧的宽限期。
+ *
+ * 本地 bridge 下一个 sessionId 的快照通常在数百毫秒内到达；超过这个时间还没有任何
+ * 帧，基本可以判定这次订阅建立了但内容不会来（服务端推流侧失败），应当重订阅而不是
+ * 让用户对着骨架屏等下去。给 8s 而不是 2s：relay 链路 + 桌面冷启动读盘的往返需要这个量级。
+ */
+private const val SNAPSHOT_GRACE_MS = 8_000L
+
+/**
+ * 会话页加载态：区分「还没加载出来」与「这个会话是空的」。
+ *
+ * 修复依据（真机 v0.2.20「会话页一直转圈」）：原先 [ChatRepository.attach] 订阅失败
+ * 只打一行 warn 就把 `attachedProtocol` 置 null，**不重试也不置任何态**——UI 侧
+ * `rows.isEmpty()` 一律渲染「加载会话…」，于是「电脑端 runtime 没起来」和「打开一个
+ * 还没有消息的会话」共用一张永挂的转圈页，用户既不知道该等也不知道该重试。
+ * 列表页 v0.2.19 已经把这两件事分开表达，会话页必须跟上。
+ */
+enum class ChatLoadState {
+    /** 首次订阅尚未收到首帧。 */
+    Loading,
+
+    /** 至少收到过一帧（可能零行，那是这个会话真的还没有内容）。 */
+    Ready,
+
+    /**
+     * 这台电脑上该工作区的 runtime 没运行，且会话历史也读不出来。
+     * 会话是只读恢复：runtime 起来后自动重试，用户也可以在电脑端打开该工作区。
+     */
+    RuntimeUnavailable,
+
+    /** 其它订阅/读取错误。 */
+    Error,
+}
 
 /**
  * 单会话对话数据源：ConversationReducer + conversation/<id> 订阅 + 发送命令。
@@ -200,6 +245,24 @@ class ChatRepository(
     private val _ui = MutableStateFlow(ChatUi())
     val ui: StateFlow<ChatUi> = _ui.asStateFlow()
 
+    /** 加载态：UI 用它区分「在等」/「没加载出来」/「这个会话真的没有内容」。 */
+    private val _loadState = MutableStateFlow(ChatLoadState.Loading)
+    val loadState: StateFlow<ChatLoadState> = _loadState.asStateFlow()
+
+    /** 订阅重试退避阶梯下标；成功订阅后归零。 */
+    private var retryDelayIndex = 0
+    /** 退避重试协程：重订阅时取消旧的，同一时刻只有一个在跑。 */
+    private var retryJob: Job? = null
+    /** 已收到过首帧：重试期间保留已渲染的行，不把内容区刷回骨架屏。 */
+    private var hasDeliveredSnapshot = false
+    /**
+     * ACK 成功但迟迟不来快照的兜底协程。
+     * 修复依据（真机 v0.2.20「会话页一直转圈」）：订阅 ACK 成功不等于内容到了——
+     * 服务端 ack 之后还要推快照帧，这一步失败时客户端处于"订阅已建立、零行"
+     * 的状态，[hasDeliveredSnapshot] 永远为 false，UI 骨架屏就一直挂着。
+     */
+    private var snapshotGraceJob: Job? = null
+
     /** resync 单飞：并发空洞帧 / 看门狗重复触发时只打一次重同步请求。 */
     private val resyncMutex = Mutex()
     private var conversationSubscriptionId: String? = null
@@ -218,8 +281,7 @@ class ChatRepository(
         scope.launch {
             connection.protocol.collect { p ->
                 if (p == null) {
-                    attachedProtocol = null
-                    conversationSubscriptionId = null
+                    onProtocolClosed()
                     return@collect
                 }
                 attach(p)
@@ -227,10 +289,55 @@ class ChatRepository(
         }
     }
 
+    /** 连接断开：保留已渲染的行（弱信号比白屏好），但把加载态退回"在等"。 */
+    private fun onProtocolClosed() {
+        attachedProtocol = null
+        conversationSubscriptionId = null
+        retryJob?.cancel()
+        retryJob = null
+        retryDelayIndex = 0
+        snapshotGraceJob?.cancel()
+        snapshotGraceJob = null
+        hasDeliveredSnapshot = false
+        _loadState.value = ChatLoadState.Loading
+    }
+
+    /**
+     * 用户点了「重试」：丢掉退避阶梯立刻重订阅一次。
+     * 机器 succeeded 之外的所有态都能重试——runtime-unavailable 等的是电脑端，
+     * Error 等的是网络，两者用户侧动作都是「再试一次」。
+     */
+    fun retrySubscribe() {
+        val p = connection.protocol.value ?: return
+        retryJob?.cancel()
+        retryJob = null
+        retryDelayIndex = 0
+        attachedProtocol = null
+        subscribe(p)
+    }
+
     private fun attach(p: ZcodeProtocolV4) {
         if (attachedProtocol === p) return
         attachedProtocol = p
         p.onConversationFrame = { frame, _ -> onFrame(frame) }
+        subscribe(p)
+        startWatchdog()
+    }
+
+    /**
+     * 一次订阅尝试；失败后按退避阶梯重试（[scheduleSubscribeRetry]）。
+     *
+     * 修复依据（真机 v0.2.20「会话页一直转圈」）：手机先开、电脑后开是最常见的顺序，
+     * 而 conversation 订阅同样是"桌面没有活跃 runtime 就读不出来"。一次性订阅意味着
+     * 这个顺序下会话页永远停在转圈。列表页 v0.2.19 已经用同一套退避解决，这里对齐。
+     */
+    private fun subscribe(p: ZcodeProtocolV4) {
+        retryJob?.cancel()
+        retryJob = null
+        retryDelayIndex = 0
+        // 已经收到过首帧就不要退回 Loading：重订阅期间把用户正在读的对话刷成骨架屏，
+        // 是比"少了一点实时更新"严重得多的体验损失。
+        if (!hasDeliveredSnapshot) _loadState.value = ChatLoadState.Loading
         scope.launch {
             try {
                 // 重连恢复：带上次水位重订阅，服务端按 replayable 补发；无水位则全新快照
@@ -245,14 +352,110 @@ class ChatRepository(
                 // （zemote _resync 的 body，conversation.dart:943-968），
                 // 原先丢掉 ack 就无从重放。
                 conversationSubscriptionId = ack.subscriptionId
+                startSnapshotGrace()
                 ZLog.i(TAG, "subscribed conversation/$sessionId")
+                // 注意：此时还没收到 snapshot，不能置 Ready——首帧到达才算数
+                // （ACK 成功但零帧是另一类故障，提前撤骨架屏会变成空白页）。
             } catch (e: Exception) {
-                ZLog.w(TAG, "subscribe failed: ${e.message}")
+                if (!isRuntimeUnavailable(e)) {
+                    ZLog.w(TAG, "subscribe failed: ${e.message}")
+                }
+                // 关键：订阅失败后必须把 attachedProtocol 置回 null，否则下一次
+                // attach(同一实例) 会被 `=== p` 判定为已订阅而直接跳过，重连后
+                // conversation 订阅永不重发（真机 19:30 bridge degrade→reopen 复现）。
                 attachedProtocol = null
                 conversationSubscriptionId = null
+                scheduleSubscribeRetry(e)
             }
         }
-        startWatchdog()
+    }
+
+    /**
+     * ACK 之后等首帧的兜底。
+     *
+     * 修复依据（真机 v0.2.20「会话页一直转圈」）：`subscribeConversation` 的 ACK 成功
+     * 只代表服务端接受了订阅，快照帧是之后单独推的。这一步静默失败时客户端
+     * 「已订阅 + 零行」，[hasDeliveredSnapshot] 永远 false，UI 骨架屏无限期挂着，
+     * 而没有任何逻辑会再发一次订阅。这里给 ACK 一个 grace 期：超时仍无帧就
+     * 按失败处理重订阅，让转圈页有一个可以自行脱离的出口。
+     */
+    private fun startSnapshotGrace() {
+        snapshotGraceJob?.cancel()
+        if (hasDeliveredSnapshot) return
+        snapshotGraceJob = scope.launch {
+            delay(SNAPSHOT_GRACE_MS)
+            if (hasDeliveredSnapshot) return@launch
+            ZLog.w(TAG, "conversation/$sessionId acked but no frame in ${SNAPSHOT_GRACE_MS}ms, resubscribing")
+            val p = connection.protocol.value ?: return@launch
+            attachedProtocol = null
+            subscribe(p)
+        }
+    }
+
+    /**
+     * 订阅失败退避重试。runtime unavailable 是"可以等"的稳态，退避到 60s 后仍在重试。
+     *
+     * 只保留一份旧内容：失败时**不清行**。会话是落盘的实体，runtime 停了它还在；
+     * 上一份快照除了实时状态依然准确，清空等于把"读不出来"谎报成"空会话"。
+     */
+    private fun scheduleSubscribeRetry(error: Exception) {
+        if (!hasDeliveredSnapshot) {
+            _loadState.value = if (isRuntimeUnavailable(error)) {
+                ChatLoadState.RuntimeUnavailable
+            } else {
+                ChatLoadState.Error
+            }
+        }
+        if (retryJob?.isActive == true) return
+        retryJob = scope.launch {
+            while (true) {
+                val delayMs = SUBSCRIBE_RETRY_DELAYS_MS[
+                    retryDelayIndex.coerceAtMost(SUBSCRIBE_RETRY_DELAYS_MS.lastIndex)
+                ]
+                retryDelayIndex++
+                delay(delayMs)
+                val p = connection.protocol.value ?: continue
+                try {
+                    val ack = p.subscribeConversation(
+                        workspacePath = workspacePath,
+                        sessionId = sessionId,
+                        workspaceIdentity = workspaceIdentity,
+                        baseLogEpoch = lastLogEpoch,
+                        baseSeq = lastSeq.takeIf { it > 0 },
+                    )
+                    attachedProtocol = p
+                    p.onConversationFrame = { frame, _ -> onFrame(frame) }
+                    conversationSubscriptionId = ack.subscriptionId
+                    retryDelayIndex = 0
+                    startSnapshotGrace()
+                    ZLog.i(TAG, "conversation subscribe recovered for $sessionId")
+                    startWatchdog()
+                    return@launch
+                } catch (e: Exception) {
+                    if (!isRuntimeUnavailable(e)) {
+                        ZLog.w(TAG, "conversation subscribe retry failed: ${e.message}")
+                    }
+                    if (!hasDeliveredSnapshot) {
+                        _loadState.value = if (isRuntimeUnavailable(e)) {
+                            ChatLoadState.RuntimeUnavailable
+                        } else {
+                            ChatLoadState.Error
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 服务端「runtime 未运行」识别：code === ZCODE_AGENT_RUNTIME_UNAVAILABLE。
+     * 桌面按 code 判、不按 message 匹配——message 是英文展示串且会变，code 是协议约定。
+     * 老桌面不回 code 时回退到 message 前缀匹配（与列表页同一判据）。
+     */
+    private fun isRuntimeUnavailable(e: Exception): Boolean {
+        val code = (e as? PromiseErrorException)?.code
+        if (code != null) return code == V4.RUNTIME_UNAVAILABLE_CODE
+        return e.message?.contains("runtime is not running", ignoreCase = true) == true
     }
 
     private fun onFrame(frame: TopicFrame) {
@@ -316,6 +519,13 @@ class ChatRepository(
         val st = reducer.snapshot(sessionId)
         lastSeq = st.seq
         lastLogEpoch = st.logEpoch
+        // 首帧到达才算列表真的可用（ACK 成功但零帧是另一类故障，不能提前撤骨架屏）。
+        if (!hasDeliveredSnapshot) {
+            hasDeliveredSnapshot = true
+            snapshotGraceJob?.cancel()
+            snapshotGraceJob = null
+            _loadState.value = ChatLoadState.Ready
+        }
         val revision = st.state?.get("revision")
         _ui.value = ChatUi(
             rows = st.rows.map { row -> toChatRow(row) },

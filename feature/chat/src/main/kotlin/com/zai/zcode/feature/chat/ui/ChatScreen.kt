@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -16,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Stop
@@ -41,7 +44,9 @@ import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
+import com.zai.zcode.core.design.components.EmptyState
 import com.zai.zcode.core.design.jellyClickable
+import com.zai.zcode.feature.chat.ChatLoadState
 import com.zai.zcode.feature.chat.ChatRepository
 import com.zai.zcode.feature.chat.ChatViewModel
 import kotlinx.coroutines.launch
@@ -57,6 +62,9 @@ fun ChatScreen(
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.ui.collectAsState()
+    // 修复依据（真机 v0.2.20「会话页一直转圈」）：光有 rows 无法区分「在读」
+    // 与「打开了一个还没有内容的会话」，必须把加载态和列表一起看。
+    val loadState by viewModel.loadState.collectAsState()
     val listState = rememberLazyListState()
     val zc = LocalZcodeColors.current
 
@@ -93,6 +101,8 @@ fun ChatScreen(
             ChatRowList(
                 rows = ui.rows,
                 listState = listState,
+                loadState = loadState,
+                onRetry = viewModel::retrySubscribe,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
             // 审批 Dock 挂在输入栏上方：命令卡住时用户视线本来就在底部，
@@ -149,6 +159,8 @@ private fun ChatTopBar(onBack: () -> Unit, onWatchScreen: () -> Unit) {
 private fun ChatRowList(
     rows: List<ChatRepository.ChatRowKind>,
     listState: LazyListState,
+    loadState: ChatLoadState,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -165,16 +177,76 @@ private fun ChatRowList(
             // 重新测量与重建 Composition —— 快速滑动时的掉帧主要来自这里。
             contentType = { row -> contentTypeOf(row) },
         ) { row -> ChatRowView(row) }
+        // 空列表不再一律「加载会话…」——零行有两种完全不同的含义。
         if (rows.isEmpty()) {
-            item {
-                Text(
-                    "加载会话…",
-                    style = ZcodeType.uiSm,
-                    color = LocalZcodeColors.current.textTertiary,
-                    modifier = Modifier.fillMaxWidth().padding(ZcodeSpacing.xxl),
-                )
+            item(key = "empty_state", contentType = "emptyState") {
+                ChatEmptyState(loadState = loadState, onRetry = onRetry)
             }
         }
+    }
+}
+
+/**
+ * 会话内容区的空态：**在等** / **读不出来** / **这个会话真的还没有内容** 三件事必须分开说。
+ *
+ * 修复依据（真机 v0.2.20「会话页一直转圈」）：原先零行一律渲染「加载会话…」，而
+ * `subscribeConversation` 依赖桌面 runtime（existing-only，桌面没起就读不出来），
+ * 订阅失败后既不重试也不置态，于是「手机先开、电脑后开」这个最常见顺序下会话页
+ * 永远停在转圈——用户既不知道该等，也不知道该去电脑上做什么。列表页 v0.2.19 已经
+ * 把这三态分开表达，会话页必须跟上同一套语义。
+ */
+@Composable
+private fun ChatEmptyState(loadState: ChatLoadState, onRetry: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    when (loadState) {
+        ChatLoadState.Loading -> Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.lg),
+        ) {
+            // 骨架而不是一行文字：内容形状在加载时就定下来，首帧到达不发生高度跳变。
+            repeat(3) { i ->
+                Row(Modifier.fillMaxWidth()) {
+                    if (i % 2 == 1) Spacer(Modifier.weight(1f))
+                    Column(Modifier.weight(if (i % 2 == 1) 0.86f else 0.94f)) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(if (i == 1) 0.62f else 0.46f)
+                                .height(11.dp)
+                                .background(zc.input, RoundedCornerShape(6.dp)),
+                        )
+                        Spacer(Modifier.height(7.dp))
+                        Box(
+                            Modifier
+                                .fillMaxWidth(if (i == 2) 0.78f else 0.9f)
+                                .height(11.dp)
+                                .background(zc.input, RoundedCornerShape(6.dp)),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(ZcodeSpacing.lg))
+            }
+        }
+
+        ChatLoadState.RuntimeUnavailable -> EmptyState(
+            title = "这个会话还没读出来",
+            description = "电脑端的这个工作区还没有运行。在电脑上打开它，这里会自动出现",
+            modifier = Modifier.fillMaxWidth().padding(top = ZcodeSpacing.xxl),
+            action = { TextButton(onClick = onRetry) { Text("立即重试") } },
+        )
+
+        ChatLoadState.Error -> EmptyState(
+            title = "读取会话失败",
+            description = "连接正常但内容没读出来，重试通常可恢复",
+            modifier = Modifier.fillMaxWidth().padding(top = ZcodeSpacing.xxl),
+            action = { TextButton(onClick = onRetry) { Text("重试") } },
+        )
+
+        ChatLoadState.Ready -> EmptyState(
+            title = "还没有消息",
+            description = "在下面写下第一条指令",
+            modifier = Modifier.fillMaxWidth().padding(top = ZcodeSpacing.xxl),
+        )
     }
 }
 

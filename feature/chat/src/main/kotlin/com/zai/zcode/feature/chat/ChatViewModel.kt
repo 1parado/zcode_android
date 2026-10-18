@@ -9,6 +9,9 @@ import androidx.lifecycle.viewModelScope
 import com.zai.zcode.core.common.ClientIdProvider
 import com.zai.zcode.core.network.ZcodeConnection
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -38,6 +41,19 @@ class ChatViewModel @Inject constructor(
     )
 
     val ui get() = repository.ui
+
+    /**
+     * 会话加载态：区分「在等」/「电脑端 runtime 没起来」/「读不出来」。
+     * 与 [ui] 分离是因为「零行」有两种截然不同的含义：会话真的还没有内容，
+     * 和一个字都没读出来。UI 必须分开呈现。
+     */
+    val loadState: StateFlow<ChatLoadState> =
+        repository.loadState.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatLoadState.Loading)
+
+    /** 用户在「电脑端未运行」提示上点重试。 */
+    fun retrySubscribe() {
+        repository.retrySubscribe()
+    }
 
     /** 草稿与发送态（UI 局部状态，不入协议层）。 */
     var draft by mutableStateOf("")
