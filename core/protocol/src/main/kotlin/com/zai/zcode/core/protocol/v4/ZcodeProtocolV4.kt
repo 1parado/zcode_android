@@ -7,7 +7,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -15,6 +17,12 @@ private const val TAG = "ZcodeProtocolV4"
 
 /** 订阅应答超时：桌面可能要先预热 session runtime（zemote conversation.dart:821）。 */
 private const val SUBSCRIBE_TIMEOUT_MS = 60_000L
+
+/**
+ * 任务索引读取超时：读的是 SQLite，不需要等 CLI 预热，12s 足够
+ * （参考实现 task_home_page.dart:317 三个分区各给 12s）。
+ */
+private const val TASK_LIST_TIMEOUT_MS = 12_000L
 
 /**
  * ZCode Protocol V4 会话门面（对齐 packages/ui/src/v4/agentV4ConnectionHandshake.ts +
@@ -209,6 +217,69 @@ class ZcodeProtocolV4(
             timeoutMs,
         )
         return SubscribeAck(raw = resultAsObject(result))
+    }
+
+    /**
+     * 读落盘任务索引（`zcode-task.listTasks`，非 pinned 非 archived 分区）。
+     *
+     * 修复依据（真机 v0.2.19「看不到工作区下已有的会话」）：sessions-index 是 CLI
+     * runtime 的内存视图（`runtimePolicy:"existing-only"`），桌面没为该 workspace
+     * 跑 CLI 时它就是空的——而用户说的"之前的会话"全都躺在落盘索引里。本方法走
+     * `zcode-task` 通道读 taskIndexRepo.listTaskMetas（SQLite），**不依赖 CLI 进程**。
+     * 参考实现 task_home_page.dart:317 与官方 taskListMembershipSets.ts:217 都以它
+     * 为列表左表。
+     *
+     * 与 [listPinnedTasks] / [listArchivedTasks] 三个分区并行调用：任一分区失败由调用
+     * 方按"该分区不可用"处理（官方 listWithAvailability 语义），不能当作权威空集。
+     */
+    suspend fun listTasks(
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = TASK_LIST_TIMEOUT_MS,
+    ): List<TaskMetaView> =
+        requestTaskList(V4.METHOD_LIST_TASKS, workspacePath, workspaceIdentity, timeoutMs)
+
+    /** 置顶分区（`listPinnedTasks`）。 */
+    suspend fun listPinnedTasks(
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = TASK_LIST_TIMEOUT_MS,
+    ): List<TaskMetaView> =
+        requestTaskList(V4.METHOD_LIST_PINNED_TASKS, workspacePath, workspaceIdentity, timeoutMs)
+
+    /** 归档分区（`listArchivedTasks`）；结果用于把已归档 id 从列表剔除。 */
+    suspend fun listArchivedTasks(
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = TASK_LIST_TIMEOUT_MS,
+    ): List<TaskMetaView> =
+        requestTaskList(V4.METHOD_LIST_ARCHIVED_TASKS, workspacePath, workspaceIdentity, timeoutMs)
+
+    private suspend fun requestTaskList(
+        method: String,
+        workspacePath: String,
+        workspaceIdentity: String?,
+        timeoutMs: Long,
+    ): List<TaskMetaView> {
+        val identity = workspaceIdentity ?: boundWorkspaceIdentity
+        // 修复依据（参考实现 task_home_page.dart:173 _scope）：参数是 {workspacePath,
+        // workspaceIdentity?} 单对象；wire 上仍包成数组（ChannelClient.send 的
+        // proxy-channel 约定），与 zcode-agent 侧调用同形。
+        val scope = buildJsonObject {
+            put("workspacePath", workspacePath)
+            if (!identity.isNullOrBlank()) put("workspaceIdentity", identity)
+        }
+        val result = channel.request(
+            V4.CHANNEL_ZCODE_TASK,
+            method,
+            buildJsonArray { add(scope) },
+            timeoutMs,
+        )
+        // 结果形状是 ZCodeTaskMeta[]；非数组（老 Host 返回对象/空）按"不可用"处理，
+        // 由调用方保留旧视图——不静默吞成空列表，否则会把已有会话说成没有。
+        return (result as? JsonArray)?.mapNotNull { el ->
+            (el as? JsonObject)?.let { TaskMetaView(it) }?.takeIf { it.taskId != null }
+        } ?: throw IllegalStateException("task list result is not an array: ${result?.javaClass?.simpleName}")
     }
 
     /**

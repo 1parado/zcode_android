@@ -24,6 +24,20 @@ object V4 {
     const val WIRE_PROTOCOL_VERSION = 3
     const val CHANNEL_ZCODE_AGENT = "zcode-agent"
 
+    /**
+     * 任务索引通道（channels.ts:110 `ZCodeTask: "zcode-task"`）。
+     *
+     * 修复依据（真机 v0.2.19「看不到工作区下已有的会话」）：zcode-agent 的 sessions-index
+     * 是**运行时**视图（`runtimePolicy:"existing-only"`，桌面 CLI 没起来就没有数据），
+     * 而 zcode-task 的 listTasks 读的是落盘索引（taskIndexRepo.listTaskMetas → SQLite），
+     * 不依赖 CLI 进程。参考实现 task_home_page.dart:317 与官方
+     * taskListMembershipSets.ts:217 都以 listTasks 为列表左表，sessions-index 只做富化。
+     */
+    const val CHANNEL_ZCODE_TASK = "zcode-task"
+    const val METHOD_LIST_TASKS = "listTasks"
+    const val METHOD_LIST_PINNED_TASKS = "listPinnedTasks"
+    const val METHOD_LIST_ARCHIVED_TASKS = "listArchivedTasks"
+
     // PROTOCOL_V4_LIMITS（客户端关心的子集）
     const val MAX_FRAME_BYTES = 1024 * 1024
     const val ASSEMBLY_MAX_BYTES = 16 * 1024 * 1024
@@ -524,6 +538,29 @@ class SessionSummaryView(val raw: JsonObject) {
     // Phase B（docs/ui-design.md）：wire optional 字段投影，旧 CLI 缺席 → 降级值
     val hasBackgroundWork: Boolean get() = raw["hasBackgroundWork"] == JsonPrimitive(true)
     val createdAt: Long? get() = raw["createdAt"].asLongOrNull()
+}
+
+/**
+ * zcode-task 的 ZCodeTaskMeta 视图（validation.ts:1627 zcodeTaskMetaSchema 的子集）。
+ *
+ * 修复依据（真机 v0.2.19）：这是**落盘索引**行——会话关掉、CLI 退出、电脑重启之后
+ * 它还在。sessions-index 的 SessionSummaryView 相反，是 CLI runtime 的内存视图。
+ * 两者 taskId/sessionId 是同一个值（参考实现 mergeWorkspaceSessionTasks 直接按
+ * taskId 对齐，task_home_page.dart:73 把 sessionId 写成 taskId）。
+ *
+ * 只投影列表用得到的字段；schema 演进加字段不影响这里（JsonObject 宽容承载）。
+ */
+class TaskMetaView(val raw: JsonObject) {
+    val taskId: String? get() = raw["taskId"].asStringOrNull()
+    val title: String? get() = raw["title"].asStringOrNull()
+    /** 落盘状态：running | completed | error（zcodeTaskPersistStatusSchema）。 */
+    val status: String? get() = raw["status"].asStringOrNull()
+    val createdAt: Long? get() = raw["createdAt"].asLongOrNull()
+    val updatedAt: Long? get() = raw["updatedAt"].asLongOrNull()
+    val model: String? get() = raw["model"].asStringOrNull()
+    val unreadAt: Long? get() = raw["unreadAt"].asLongOrNull()
+    val workspacePath: String? get() = raw["workspacePath"].asStringOrNull()
+    val workspaceIdentity: String? get() = raw["workspaceIdentity"].asStringOrNull()
 }
 
 /** sessions-index delta（op 集合封闭：session.upserted / session.removed）。 */

@@ -728,7 +728,15 @@ class ZcodeConnection(
      * 任何可行动信息——到底没连上、被服务端拒了、还是 ACK 里没有 sessionId，完全不同。
      * 改成 [CreateSessionResult]，把服务端 reasonCode/message 原样带上。
      *
-     * @param firstInput 首条输入文本；null 创建 draft 空会话（phase=draft）
+     * 修复依据（真机 v0.2.19「创建会话还是不行」）：[firstInput] 为 null 时，服务端
+     * createSession 只建一条 deferred 空记录——draft 是纯内存态，不落盘、也不进
+     * task index sqlite（zcodeTaskIndexSyncer.ts:675 `if (next.phase === "draft")
+     * return;`）。结果是「创建成功、列表里永远看不到」，用户判定为创建失败。
+     * 只有 firstInput 经 startPromptTurn（session-mgmt.ts:105）提交才会把 session
+     * 提升为 immediate 并落盘。参考实现 chat_page.dart:687 同理：首条消息随
+     * createSession 一起发，而不是先建空会话再补发 sendText。
+     *
+     * @param firstInput 首条输入文本。**必须非空**——为空等于建一个不可见的 draft。
      */
     suspend fun createSession(firstInput: String? = null): CreateSessionResult {
         val p = _protocol.value ?: return CreateSessionResult.Failure(CreateSessionReason.NotConnected)

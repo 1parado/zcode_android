@@ -110,17 +110,44 @@ class SessionsViewModel @Inject constructor(
         private set
 
     /**
-     * Android 端创建会话（用户报"应该支持在 Android 上进行会话创建"）。
-     * 成功后直接打开新会话；创建成功的新会话会随 sessions-index 增量出现在列表里。
+     * 新会话草稿：点「+」后进入的待发状态，此时**还没有**会话。
+     *
+     * 修复依据（真机 v0.2.19「创建会话还是不行」）：此前点「+」立刻发
+     * `createSession(firstInput = null)`，服务端只建一条 deferred 空记录——
+     * draft 是纯内存态，不落盘也不进 task index（zcodeTaskIndexSyncer.ts:675），
+     * 于是「创建成功、列表里永远看不到」。参考实现 chat_page.dart:674 是同一
+     * 语义：会话 id 为 null 时先让用户打字，首条消息随 createSession 一起发出。
+     * 这里对齐：草稿期只占 UI，不发命令；[startSession] 才真正创建。
      */
-    fun createSession(onCreated: (sessionId: String) -> Unit) {
-        if (creating) return
+    var draftSession by mutableStateOf(false)
+        private set
+
+    fun openDraftSession() {
+        createError = null
+        draftSession = true
+    }
+
+    fun closeDraftSession() {
+        draftSession = false
+    }
+
+    /**
+     * 用首条消息真正创建会话（对齐 chat_page.dart:687 / session-mgmt.ts:105）。
+     * 首条文本非空是硬前提——空 firstInput 只会建出不可见的 draft。
+     */
+    fun startSession(firstMessage: String, onCreated: (sessionId: String) -> Unit) {
+        val text = firstMessage.trim()
+        if (text.isEmpty() || creating) return
         creating = true
         createError = null
         viewModelScope.launch {
-            when (val result = connection.createSession(firstInput = null)) {
+            when (val result = connection.createSession(firstInput = text)) {
                 is ZcodeConnection.CreateSessionResult.Success -> {
                     creating = false
+                    draftSession = false
+                    // 新会话刚从 draft 提升并落盘，等订阅推过来要几十秒；立刻重拉
+                    // 一次索引，用户回到列表时它已经在那里。
+                    repository.refreshIndex()
                     onCreated(result.sessionId)
                 }
 

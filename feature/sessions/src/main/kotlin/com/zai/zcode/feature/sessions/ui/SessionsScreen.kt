@@ -33,7 +33,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -127,7 +126,10 @@ fun SessionsScreen(
                 FilterChip(label = f.label, selected = filter == f, onClick = { viewModel.onFilterSelected(f) })
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { viewModel.createSession(onOpenSession) }) {
+            // 修复依据（真机 v0.2.19「创建会话还是不行」）：「+」不再直接建空会话。
+            // 空会话是服务端 draft（纯内存、不落盘、不进任务索引），建了也看不见；
+            // 改为进入草稿页，由用户首条消息真正创建。
+            IconButton(onClick = { viewModel.openDraftSession() }) {
                 Icon(Icons.Rounded.Add, contentDescription = "新建会话", tint = zc.text)
             }
         }
@@ -148,23 +150,30 @@ fun SessionsScreen(
         // EmptyState("暂无任务") 把三种完全不同的事实混成一张脸——runtime 没起来在等、
         // 订阅失败、真的没会话。先看加载态，再看列表内容。
         val listState by viewModel.listState.collectAsState()
+        // 草稿页盖在列表之上：会话还不存在，此时没有任何列表可渲染。
+        if (viewModel.draftSession) {
+            NewSessionScreen(
+                creating = creating,
+                error = createError,
+                onDismissError = viewModel::dismissCreateError,
+                onSubmit = { text -> viewModel.startSession(text, onOpenSession) },
+                onCancel = viewModel::closeDraftSession,
+            )
+            return@Column
+        }
         if (!listStateLoaded(listState, sessions)) {
             SessionListPlaceholder(
                 listState = listState,
                 connected = connState is com.zai.zcode.core.network.ZcodeConnection.State.Ready,
                 onRetry = viewModel::retrySubscribe,
-                onCreate = { viewModel.createSession(onOpenSession) },
+                onCreate = { viewModel.openDraftSession() },
                 creating = creating,
             )
         } else {
             val nowEpochDay = LocalDate.now().toEpochDay()
             val sections = SessionsOrdering.groupByRecency(sessions, { it }, nowEpochDay)
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    // 修复依据（spec §5.2 离线/不可用态）：runtime 不在时列表保留但降饱和，
-                    // 而不是清空。用户在手机上看的是"上次见到的任务"，清空等于骗他任务没了。
-                    .then(if (listState == SessionsListState.RuntimeUnavailable) Modifier.staleList() else Modifier),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     horizontal = ZcodeSpacing.screenPadding,
                     vertical = ZcodeSpacing.md,
@@ -210,13 +219,6 @@ fun SessionsScreen(
  */
 private fun listStateLoaded(state: SessionsListState, sessions: List<SessionsRepository.SessionItem>): Boolean =
     state == SessionsListState.Ready || (sessions.isNotEmpty() && state != SessionsListState.Loading)
-
-/**
- * 陈旧列表降饱和（docs/ui-design.md §5.2 离线态）。
- * 只降 alpha 不改布局，既是"这份数据可能过期"的信号，也不把内容推走重排。
- * alpha() 是非组合 API，可在纯函数里构造 Modifier 常量。
- */
-private fun Modifier.staleList(): Modifier = this.alpha(0.55f)
 
 /**
  * 列表占位：Loading 给骨架卡，RuntimeUnavailable / Error 给可读说明 + 重试。
