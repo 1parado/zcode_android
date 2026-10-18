@@ -61,6 +61,9 @@ dependencies {
     implementation(project(":core:protocol"))
     implementation(project(":core:network"))
     implementation(project(":core:design"))
+    // 修复依据（SettingsScreen 顶栏图标钮）：app 模块此前没有 icons-extended，
+    // ArrowBack 等扩展图标在 app 内 Unresolved（feature 模块各自带）。
+    implementation(libs.androidx.compose.material.icons)
     implementation(project(":feature:connect"))
     implementation(project(":feature:sessions"))
     implementation(project(":feature:chat"))

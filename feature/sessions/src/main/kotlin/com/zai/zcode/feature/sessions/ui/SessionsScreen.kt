@@ -75,6 +75,40 @@ fun SessionsScreen(
     val createError = viewModel.createError
     val zc = LocalZcodeColors.current
 
+    // 修复依据（用户截图：草稿页"叠"在列表页上——顶栏/工作区卡/新建按钮同时可见，
+    // 关闭按钮看起来像返回但列表还在）：草稿页必须**整屏替换**列表页。
+    // 此前 if 分支在 Column 中部，return@Column 只跳过剩余内容、顶栏照常渲染。
+    if (viewModel.draftSession) {
+        NewSessionScreen(
+            creating = creating,
+            error = createError,
+            onDismissError = viewModel::dismissCreateError,
+            onSubmit = { text ->
+                viewModel.startSession(
+                    text,
+                    onOpenSession,
+                    providerId = viewModel.selectedModel?.providerId,
+                    modelId = viewModel.selectedModel?.modelId,
+                    thought = viewModel.selectedThought,
+                    mode = viewModel.selectedMode,
+                )
+            },
+            onCancel = viewModel::closeDraftSession,
+            modelOptions = viewModel.draftModelOptions,
+            modelLoading = viewModel.draftModelLoading,
+            selectedModel = viewModel.selectedModel,
+            onSelectModel = { viewModel.selectedModel = it },
+            selectedMode = viewModel.selectedMode,
+            onSelectMode = { viewModel.selectedMode = it },
+            selectedThought = viewModel.selectedThought,
+            onSelectThought = { viewModel.selectedThought = it },
+            modeOptions = viewModel.modeOptions,
+            thoughtOptions = viewModel.thoughtOptions,
+            thoughtLabel = viewModel::thoughtLabel,
+        )
+        return
+    }
+
     Column(Modifier.fillMaxSize()) {
         // 顶栏：标题 + 设置（触控重设计：DeviceChip 从顶栏挤窄的位置移出，改为
         // 下方整行工作区选择卡——用户报「工作区按钮太不好点」，被标题挤压后
@@ -190,37 +224,6 @@ fun SessionsScreen(
         // EmptyState("暂无任务") 把三种完全不同的事实混成一张脸——runtime 没起来在等、
         // 订阅失败、真的没会话。先看加载态，再看列表内容。
         val listState by viewModel.listState.collectAsState()
-        // 草稿页盖在列表之上：会话还不存在，此时没有任何列表可渲染。
-        if (viewModel.draftSession) {
-            NewSessionScreen(
-                creating = creating,
-                error = createError,
-                onDismissError = viewModel::dismissCreateError,
-                onSubmit = { text ->
-                    viewModel.startSession(
-                        text,
-                        onOpenSession,
-                        providerId = viewModel.selectedModel?.providerId,
-                        modelId = viewModel.selectedModel?.modelId,
-                        thought = viewModel.selectedThought,
-                        mode = viewModel.selectedMode,
-                    )
-                },
-                onCancel = viewModel::closeDraftSession,
-                modelOptions = viewModel.draftModelOptions,
-                modelLoading = viewModel.draftModelLoading,
-                selectedModel = viewModel.selectedModel,
-                onSelectModel = { viewModel.selectedModel = it },
-                selectedMode = viewModel.selectedMode,
-                onSelectMode = { viewModel.selectedMode = it },
-                selectedThought = viewModel.selectedThought,
-                onSelectThought = { viewModel.selectedThought = it },
-                modeOptions = viewModel.modeOptions,
-                thoughtOptions = viewModel.thoughtOptions,
-                thoughtLabel = viewModel::thoughtLabel,
-            )
-            return@Column
-        }
         if (!listStateLoaded(listState, sessions)) {
             SessionListPlaceholder(
                 listState = listState,

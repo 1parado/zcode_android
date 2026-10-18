@@ -9,10 +9,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,16 +68,23 @@ fun SettingsScreen(
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        // 顶栏重做（与列表页/会话页统一：48dp 图标钮 + 标题居左）——原三元素居中行
+        // 的「‹ 返回」TextButton 触达区小且视觉上不像按钮，用户报「点了没反应」。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.md),
+                .padding(horizontal = ZcodeSpacing.xs, vertical = ZcodeSpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("‹ 返回", style = ZcodeType.uiSm) }
-            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "返回",
+                    tint = zc.text,
+                )
+            }
+            Spacer(Modifier.width(4.dp))
             Text("设置", style = ZcodeType.uiXl, color = zc.text)
-            Spacer(Modifier.weight(1f))
         }
 
         Column(
