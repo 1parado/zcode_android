@@ -893,14 +893,17 @@ class ChatRepository(
             isRunning = st.state?.get("phase").asStringOrNull()
                 ?.let { it == "draft" || it == "prewarming" || it == "running" } == true,
             turnFailed = st.state?.get("phase").asStringOrNull() == "error",
-            queue = projectQueue(st.state),
-            queueAutoDrain = st.state?.get("queue")?.asObjectOrNull()
+            // 修复依据（真机「电脑端有审批条手机端没有」）：pendingInteractions/queue/
+            // subagents/usage 是快照顶层键 + state.updated patch 顶层键，不在 state
+            // 嵌套对象里。topLevel 优先，state 兜底（兼容旧读法）。
+            queue = projectQueue(st.topLevel ?: st.state),
+            queueAutoDrain = (st.topLevel ?: st.state)?.get("queue")?.asObjectOrNull()
                 ?.get("autoDrain")?.let { it == kotlinx.serialization.json.JsonPrimitive(true) } ?: true,
-            subagents = projectSubagents(st.state),
-            subagentsEnded = st.state?.get("subagents")?.asObjectOrNull()
+            subagents = projectSubagents(st.topLevel ?: st.state),
+            subagentsEnded = (st.topLevel ?: st.state)?.get("subagents")?.asObjectOrNull()
                 ?.get("endedTotal").asIntOrNull() ?: 0,
-            contextUsage = projectContextUsage(st.state),
-            pendingInteractions = projectPendingInteractions(st.state),
+            contextUsage = projectContextUsage(st.topLevel ?: st.state),
+            pendingInteractions = projectPendingInteractions(st.topLevel ?: st.state),
             title = projectTitle(st.state, st.rows),
         )
     }

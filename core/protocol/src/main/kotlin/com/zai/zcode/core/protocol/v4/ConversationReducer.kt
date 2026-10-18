@@ -19,6 +19,11 @@ class ConversationReducer {
         val sessionId: String,
         val rows: List<JsonObject> = emptyList(),
         val state: JsonObject? = null,
+        /**
+         * 快照顶层原文（pendingInteractions/queue/subagents/usage 的真正所在，
+         * snapshot.ts:493 顶层键；state.updated patch 同样在顶层带这些键）。
+         */
+        val topLevel: JsonObject? = null,
         /** 已确认水位。 */
         val seq: Long = 0,
         val logEpoch: String? = null,
@@ -26,6 +31,7 @@ class ConversationReducer {
 
     private val rowsById = LinkedHashMap<Long, JsonObject>()
     private var state: JsonObject? = null
+    private var topLevel: JsonObject? = null
     private var seq: Long = 0
     private var logEpoch: String? = null
 
@@ -60,6 +66,11 @@ class ConversationReducer {
             // （缺 state 键 = 无 state，不应保留旧值）。
             state = snapshot["state"]?.asObjectOrNull()
             logEpoch = snapshot["logEpoch"]?.asStringOrNull()
+            // 修复依据（真机「电脑端有审批条手机端没有」）：pendingInteractions/queue/
+            // subagents/usage 等是快照**顶层**键（snapshot.ts:493），state.updated delta
+            // 的 patch 也在**顶层**携带它们（delta.ts:40 StatePatch）。此前只存
+            // snapshot["state"] 嵌套对象，这些字段永远读不到。
+            topLevel = snapshot
             if (frame.toSeq > seq) seq = frame.toSeq
             return true
         }
@@ -123,6 +134,10 @@ class ConversationReducer {
             is ConversationDeltaView.StateUpdated -> {
                 val base = state
                 state = if (base == null) view.patch else base.mergeKeys(view.patch)
+                // 修复依据（真机「审批条不出现」）：StatePatch 的 queue/pendingInteractions/
+                // subagents/usage 等是**顶层**键（delta.ts:40），同步合并到 topLevel 投影源。
+                val top = topLevel
+                topLevel = if (top == null) view.patch else top.mergeKeys(view.patch)
             }
             is ConversationDeltaView.PluginUi,
             is ConversationDeltaView.WorkflowRunUpdated,
@@ -151,12 +166,13 @@ class ConversationReducer {
     /** 当前投影快照。 */
     fun snapshot(sessionId: String): ConversationState {
         val rows = rowsById.entries.sortedBy { it.key }.map { it.value }
-        return ConversationState(sessionId, rows, state, seq, logEpoch)
+        return ConversationState(sessionId, rows, state, topLevel, seq, logEpoch)
     }
 
     fun reset() {
         rowsById.clear()
         state = null
+        topLevel = null
         seq = 0
         // 修复依据（P2-12）：reset 须同时清 logEpoch，否则新连接同 topic 旧 epoch 残留。
         logEpoch = null
