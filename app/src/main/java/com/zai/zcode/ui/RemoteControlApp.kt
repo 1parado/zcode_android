@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,12 +42,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -68,6 +68,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.zai.zcode.BuildConfig
+import com.zai.zcode.core.design.LocalZcodeColors
+import com.zai.zcode.core.design.ZcodeShape
+import com.zai.zcode.core.design.ZcodeSpacing
+import com.zai.zcode.core.design.ZcodeType
+import com.zai.zcode.core.design.jellyClickable
 import com.zai.zcode.R
 import com.zai.zcode.remote.RemoteControlRecentLink
 import com.zai.zcode.remote.RemoteControlUrlPolicy
@@ -108,8 +113,8 @@ fun RemoteControlApp(
 
     Surface(
         modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
-        contentColor = MaterialTheme.colorScheme.onBackground,
+        color = LocalZcodeColors.current.base,
+        contentColor = LocalZcodeColors.current.text,
     ) {
         if (scannerOpen) {
             RemoteControlQrScanner(
@@ -168,6 +173,7 @@ private fun RemoteControlQrScanner(
     onScanned: (String) -> Boolean,
 ) {
     var scanError by rememberSaveable { mutableStateOf<String?>(null) }
+    val zc = LocalZcodeColors.current
 
     BackHandler(onBack = onClose)
 
@@ -178,35 +184,38 @@ private fun RemoteControlQrScanner(
                 scanError = it
             },
         )
+        // 修复依据（v0.2.26）：与 QrScanScreen(v0.2.24) 同语言——相机画面上浮黑色
+        // 半透明压底保证可读，字阶走 ZcodeType，不再用 Material surface 色板。
         Surface(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .statusBarsPadding(),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
-                    .padding(horizontal = 12.dp),
+                    .padding(horizontal = ZcodeSpacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.remote_scan_title),
-                        style = MaterialTheme.typography.titleSmall,
+                        style = ZcodeType.uiMd,
+                        color = androidx.compose.ui.graphics.Color.White,
                     )
                     Text(
                         text = stringResource(R.string.remote_scan_hint),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = ZcodeType.uiXs,
+                        color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f),
                     )
                 }
                 TextButton(onClick = onClose) {
-                    Text(stringResource(R.string.remote_close_button))
+                    Text(stringResource(R.string.remote_close_button), color = androidx.compose.ui.graphics.Color.White)
                 }
             }
         }
@@ -216,15 +225,15 @@ private fun RemoteControlQrScanner(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .navigationBarsPadding()
-                    .padding(16.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                tonalElevation = 2.dp,
+                    .padding(ZcodeSpacing.screenPadding),
+                color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.82f),
+                shape = ZcodeShape.card,
             ) {
                 Text(
                     text = message,
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(ZcodeSpacing.md),
+                    style = ZcodeType.uiSm,
+                    color = zc.error,
                 )
             }
         }
@@ -399,6 +408,7 @@ private fun RemoteControlLauncher(
     onClearRecentLinks: () -> Unit,
 ) {
     val context = LocalContext.current
+    val zc = LocalZcodeColors.current
     var input by rememberSaveable { mutableStateOf("") }
     var localError by rememberSaveable { mutableStateOf<String?>(null) }
     val invalidUrlMessage = stringResource(R.string.remote_url_invalid)
@@ -410,21 +420,21 @@ private fun RemoteControlLauncher(
             .statusBarsPadding()
             .navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(20.dp),
+            .padding(ZcodeSpacing.xl),
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
             text = stringResource(R.string.remote_launcher_title),
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
+            style = ZcodeType.uiXl,
+            color = zc.text,
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(ZcodeSpacing.sm))
         Text(
             text = stringResource(R.string.remote_launcher_description),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = ZcodeType.uiMd,
+            color = zc.textSecondary,
         )
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(ZcodeSpacing.xl))
         OutlinedTextField(
             value = input,
             onValueChange = {
@@ -434,36 +444,36 @@ private fun RemoteControlLauncher(
             modifier = Modifier.fillMaxWidth(),
             singleLine = false,
             minLines = 2,
-            label = { Text(stringResource(R.string.remote_url_label)) },
-            placeholder = { Text(stringResource(R.string.remote_url_placeholder)) },
-            isError = visibleError != null,
+            shape = ZcodeShape.input,
+            textStyle = ZcodeType.uiMd,
+            label = { Text(stringResource(R.string.remote_url_label), style = ZcodeType.uiXs, color = zc.textTertiary) },
+            placeholder = { Text(stringResource(R.string.remote_url_placeholder), style = ZcodeType.uiSm, color = zc.textTertiary) },
             supportingText = {
                 visibleError?.let {
-                    Text(it)
+                    Text(it, style = ZcodeType.uiXs, color = zc.error)
                 }
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+                unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
+                focusedContainerColor = zc.input,
+                unfocusedContainerColor = zc.input,
+                focusedTextColor = zc.text,
+                unfocusedTextColor = zc.text,
+                cursorColor = zc.text,
+            ),
         )
-        Spacer(modifier = Modifier.height(12.dp))
-        Button(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                if (!onOpenUrl(input)) {
-                    localError = invalidUrlMessage
-                }
-            },
-        ) {
-            Text(stringResource(R.string.remote_open_button))
-        }
-        Spacer(modifier = Modifier.height(8.dp))
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onScanQrCode,
-        ) {
-            Text(stringResource(R.string.remote_scan_button))
-        }
+        Spacer(modifier = Modifier.height(ZcodeSpacing.md))
+        PrimaryButton(label = stringResource(R.string.remote_open_button), onClick = {
+            if (!onOpenUrl(input)) {
+                localError = invalidUrlMessage
+            }
+        })
+        Spacer(modifier = Modifier.height(ZcodeSpacing.sm))
+        SecondaryButton(label = stringResource(R.string.remote_scan_button), onClick = onScanQrCode)
         if (recentLinks.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(ZcodeSpacing.xl))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -471,24 +481,27 @@ private fun RemoteControlLauncher(
                 Text(
                     text = stringResource(R.string.remote_recent_title),
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onBackground,
+                    style = ZcodeType.uiMd,
+                    color = zc.text,
                 )
                 TextButton(onClick = onClearRecentLinks) {
-                    Text(stringResource(R.string.remote_recent_clear))
+                    Text(stringResource(R.string.remote_recent_clear), style = ZcodeType.uiSm, color = zc.textSecondary)
                 }
             }
             recentLinks.forEach { link ->
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = {
-                        // Bugfix: 二维码链接很长，用户重启 App 后手输容易出错。
-                        // 这里复用本地已校验过的历史记录，但打开前仍走 onOpenUrl 的白名单校验。
-                        if (!onOpenUrl(link.url)) {
-                            localError = invalidUrlMessage
-                        }
-                    },
+                Spacer(modifier = Modifier.height(ZcodeSpacing.sm))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .jellyClickable(onClickLabel = link.displayTitle(), onClick = {
+                            // Bugfix: 二维码链接很长，用户重启 App 后手输容易出错。
+                            // 这里复用本地已校验过的历史记录，但打开前仍走 onOpenUrl 的白名单校验。
+                            if (!onOpenUrl(link.url)) {
+                                localError = invalidUrlMessage
+                            }
+                        })
+                        .background(zc.card, ZcodeShape.card)
+                        .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -498,19 +511,54 @@ private fun RemoteControlLauncher(
                             text = link.displayTitle(),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = ZcodeType.uiMd,
+                            color = zc.text,
                         )
                         Text(
                             text = link.displaySubtitle(context),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = ZcodeType.uiXs,
+                            color = zc.textSecondary,
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/** 主操作：中性反色填充（zc.text 底 + zc.base 前景），48dp 触控目标 + 果冻按压。 */
+@Composable
+private fun PrimaryButton(label: String, onClick: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .jellyClickable(onClick = onClick, onClickLabel = label)
+            .background(zc.text, ZcodeShape.input)
+            .padding(horizontal = ZcodeSpacing.lg, vertical = ZcodeSpacing.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = ZcodeType.uiMd, color = zc.base)
+    }
+}
+
+/** 次级操作：卡底色 + 主文本，不与主操作抢视觉权重。 */
+@Composable
+private fun SecondaryButton(label: String, onClick: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .jellyClickable(onClick = onClick, onClickLabel = label)
+            .background(zc.card, ZcodeShape.input)
+            .padding(horizontal = ZcodeSpacing.lg, vertical = ZcodeSpacing.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = ZcodeType.uiMd, color = zc.text)
     }
 }
 
@@ -555,6 +603,8 @@ private fun RemoteControlWebViewScreen(
             LinearProgressIndicator(
                 progress = { (progress.coerceIn(0, 100) / 100f) },
                 modifier = Modifier.fillMaxWidth(),
+                color = LocalZcodeColors.current.queued,
+                trackColor = LocalZcodeColors.current.input,
             )
         }
         Box(modifier = Modifier.fillMaxSize()) {
@@ -604,12 +654,13 @@ private fun RemoteControlTopBar(
     onReload: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val zc = LocalZcodeColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
             .height(48.dp)
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = ZcodeSpacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -617,28 +668,30 @@ private fun RemoteControlTopBar(
                 text = stringResource(R.string.remote_screen_title),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall,
+                style = ZcodeType.uiSm,
+                color = zc.text,
             )
             Text(
                 text = remoteUrl,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = ZcodeType.uiXs,
+                color = zc.textSecondary,
             )
         }
         if (isLoading) {
             CircularProgressIndicator(
                 modifier = Modifier.size(18.dp),
                 strokeWidth = 2.dp,
+                color = zc.textTertiary,
             )
             Spacer(modifier = Modifier.width(8.dp))
         }
         TextButton(onClick = onReload) {
-            Text(stringResource(R.string.remote_reload_button))
+            Text(stringResource(R.string.remote_reload_button), style = ZcodeType.uiSm, color = zc.textSecondary)
         }
         TextButton(onClick = onClose) {
-            Text(stringResource(R.string.remote_close_button))
+            Text(stringResource(R.string.remote_close_button), style = ZcodeType.uiSm, color = zc.textSecondary)
         }
     }
 }
@@ -648,32 +701,31 @@ private fun RemoteControlErrorOverlay(
     message: String,
     onRetry: () -> Unit,
 ) {
+    val zc = LocalZcodeColors.current
     Surface(
         modifier = Modifier
             .fillMaxSize()
-            .padding(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp,
+            .padding(ZcodeSpacing.xl),
+        color = zc.base,
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(ZcodeSpacing.xl),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.Start,
         ) {
             Text(
                 text = stringResource(R.string.remote_load_failed_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = ZcodeType.uiLg,
+                color = zc.text,
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(ZcodeSpacing.sm))
             Text(
                 text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = ZcodeType.uiMd,
+                color = zc.textSecondary,
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onRetry) {
-                Text(stringResource(R.string.remote_retry_button))
-            }
+            Spacer(modifier = Modifier.height(ZcodeSpacing.lg))
+            PrimaryButton(label = stringResource(R.string.remote_retry_button), onClick = onRetry)
         }
     }
 }
