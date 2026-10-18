@@ -39,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.zai.zcode.core.design.LocalZcodeColors
@@ -155,6 +156,27 @@ fun ChatScreen(
                     style = ZcodeType.uiXs,
                     color = zc.error,
                 )
+            }
+            // 回合失败横幅（用户报「发消息一直没回复」的可见性修复）：电脑端模型请求
+            // 失败（网络/provider 异常）时 phase=error 且无 assistantText 行——不提示
+            // 就是静默空白，用户以为没发出去。横幅点名失败 + 重试动作。
+            if (ui.turnFailed && !ui.isRunning) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = ZcodeSpacing.screenPadding, vertical = ZcodeSpacing.xs)
+                        .clip(ZcodeShape.inner)
+                        .background(zc.error.copy(alpha = 0.12f))
+                        .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "电脑端回复失败（模型请求出错），请重试或在电脑端查看详情",
+                        style = ZcodeType.uiXs,
+                        color = zc.error,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
             ChatComposer(viewModel = viewModel, isRunning = ui.isRunning)
         }

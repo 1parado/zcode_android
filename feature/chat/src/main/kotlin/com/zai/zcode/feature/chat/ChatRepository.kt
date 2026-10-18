@@ -207,6 +207,13 @@ class ChatRepository(
          *  completedSuccess、completedInterrupted、error），UI 运行态判定不猜子串（评审 P3）。 */
         val isRunning: Boolean = false,
         /**
+         * 最近一个回合是否失败（phase == "error"）。
+         * 修复依据（真机 22:21「发消息一直没回复」现场）：电脑端模型 API 请求失败
+         * （cli log turn.failed / model_retry network_error），手机端只看到 phase=error
+         * 而没有 assistantText 行——静默空白让用户以为是没发出去。失败必须可见。
+         */
+        val turnFailed: Boolean = false,
+        /**
          * 待决交互（state.pendingInteractions）。手机不在电脑前时命令卡在这里，
          * 这是远程操控最核心的一块屏幕——列表为空则不渲染 Dock。
          */
@@ -650,6 +657,7 @@ class ChatRepository(
             // 不在 UI 里 contains("run") 猜子串
             isRunning = st.state?.get("phase").asStringOrNull()
                 ?.let { it == "draft" || it == "prewarming" || it == "running" } == true,
+            turnFailed = st.state?.get("phase").asStringOrNull() == "error",
             pendingInteractions = projectPendingInteractions(st.state),
             title = projectTitle(st.state, st.rows),
         )
