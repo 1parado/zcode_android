@@ -13,12 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -30,6 +27,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import com.zai.zcode.core.design.LocalZcodeColors
+import com.zai.zcode.core.design.ZcodeShape
+import com.zai.zcode.core.design.ZcodeSpacing
+import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.markdown.MdBlock
 import com.zai.zcode.core.markdown.MdCodeHighlighter
 import com.zai.zcode.core.markdown.MdSpan
@@ -37,6 +38,12 @@ import com.zai.zcode.core.markdown.MdSpan
 /**
  * 单块渲染：每块一个 composable，流式更新只重组变化块。
  * 表格与代码块横滚（不抢占父布局手势，见 ChatScreen 的 pointerInput 拦截说明）。
+ *
+ * 修复依据（v0.2.25）：此前全部走 MaterialTheme 默认字阶与 colorScheme
+ * （titleLarge/bodyMedium/primary/surfaceVariant/outline），是全 App 里唯一一块
+ * "每条回复都要路过"却不吃设计令牌的渲染面——列表和输入框换了 Zai 风格，
+ * 助手回答里的标题/代码块/表格还是另一套字体层级与紫色强调。本版对齐 ZcodeType /
+ * LocalZcodeColors / ZcodeShape，正文统一 uiMd、强调色一律语义色。
  */
 @Composable
 fun MdBlockView(block: MdBlock, modifier: Modifier = Modifier) {
@@ -56,17 +63,21 @@ fun MdBlockView(block: MdBlock, modifier: Modifier = Modifier) {
 
 @Composable
 private fun MdHeading(block: MdBlock.Heading, modifier: Modifier) {
+    val zc = LocalZcodeColors.current
     val style = when (block.level) {
-        1 -> MaterialTheme.typography.titleLarge
-        2 -> MaterialTheme.typography.titleMedium
-        3 -> MaterialTheme.typography.titleSmall
-        else -> MaterialTheme.typography.labelLarge
+        // Markdown 标题映射：h1→uiXl（页面大标题量级）… h4+→uiMd。
+        // 不再借用 Material 的 title/label 层级——字阶必须只有一套。
+        1 -> ZcodeType.uiXl
+        2 -> ZcodeType.uiLg
+        3 -> ZcodeType.uiMd
+        else -> ZcodeType.uiMd
     }
     Text(
         text = spansToAnnotated(block.spans),
         style = style,
         fontWeight = FontWeight.Bold,
-        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
+        color = zc.text,
+        modifier = modifier.fillMaxWidth().padding(vertical = ZcodeSpacing.xs),
     )
 }
 
@@ -76,14 +87,14 @@ private fun MdHeading(block: MdBlock.Heading, modifier: Modifier) {
 private fun MdParagraph(block: MdBlock.Paragraph, modifier: Modifier) {
     Text(
         text = spansToAnnotated(block.spans),
-        style = MaterialTheme.typography.bodyMedium,
+        style = ZcodeType.uiMd,
+        color = LocalZcodeColors.current.text,
         modifier = modifier.fillMaxWidth(),
     )
 }
 
 // ---------- 代码块 ----------
 
-private val CODE_BG = Color(0x14FFFFFF) // 表面色 8% 白叠加，暗色亮色主题都柔和
 private val CODE_KEYWORD = Color(0xFF82AAFF)
 private val CODE_STRING = Color(0xFFC3E88D)
 private val CODE_COMMENT = Color(0xFF7A7F9A)
@@ -92,35 +103,37 @@ private val CODE_ANNOTATION = Color(0xFFFFCB6B)
 
 @Composable
 private fun MdCode(block: MdBlock.CodeBlock, modifier: Modifier) {
+    val zc = LocalZcodeColors.current
     val clipboard = LocalClipboardManager.current
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(CODE_BG)
-            .padding(10.dp),
+            .clip(ZcodeShape.inner)
+            .background(zc.input)
+            .padding(ZcodeSpacing.sm),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
                 block.language ?: "text",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.outline,
+                style = ZcodeType.uiXs,
+                color = zc.textTertiary,
             )
             Text(
                 "复制",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
+                style = ZcodeType.uiXs,
+                color = zc.queued,
                 modifier = Modifier.clickable {
                     clipboard.setText(AnnotatedString(block.lines.joinToString("\n")))
                 },
             )
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(ZcodeSpacing.xs))
         Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
             block.lines.forEach { line ->
                 Text(
                     text = highlightLine(line, block.language),
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    style = ZcodeType.mono,
+                    color = zc.text,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -154,9 +167,9 @@ private fun MdQuote(block: MdBlock.Quote, modifier: Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(start = 10.dp, top = 6.dp, bottom = 6.dp, end = 6.dp),
+            .clip(ZcodeShape.control)
+            .background(LocalZcodeColors.current.panel)
+            .padding(start = ZcodeSpacing.sm, top = ZcodeSpacing.xs, bottom = ZcodeSpacing.xs, end = ZcodeSpacing.xs),
     ) {
         block.blocks.forEach { MdBlockView(it) }
     }
@@ -166,13 +179,14 @@ private fun MdQuote(block: MdBlock.Quote, modifier: Modifier) {
 
 @Composable
 private fun MdList(block: MdBlock.ListBlock, modifier: Modifier) {
+    val zc = LocalZcodeColors.current
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         block.items.forEachIndexed { index, itemBlocks ->
             Row {
                 Text(
                     if (block.ordered) "${index + 1}." else "•",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    style = ZcodeType.uiMd,
+                    color = zc.textTertiary,
                     modifier = Modifier.width(24.dp),
                 )
                 Column(Modifier.weight(1f)) { itemBlocks.forEach { MdBlockView(it) } }
@@ -185,22 +199,24 @@ private fun MdList(block: MdBlock.ListBlock, modifier: Modifier) {
 
 @Composable
 private fun MdTable(block: MdBlock.Table, modifier: Modifier) {
+    val zc = LocalZcodeColors.current
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .clip(ZcodeShape.inner)
+            .background(zc.panel)
             .horizontalScroll(rememberScrollState())
-            .padding(8.dp),
+            .padding(ZcodeSpacing.sm),
     ) {
         // 表头
         Row {
             block.header.forEach { cell ->
                 Text(
                     spansToAnnotated(cell),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = ZcodeType.uiSm,
+                    color = zc.text,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.widthIn(min = 72.dp).padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.widthIn(min = 72.dp).padding(horizontal = ZcodeSpacing.sm, vertical = ZcodeSpacing.xs),
                 )
             }
         }
@@ -209,8 +225,9 @@ private fun MdTable(block: MdBlock.Table, modifier: Modifier) {
                 row.forEach { cell ->
                     Text(
                         spansToAnnotated(cell),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.widthIn(min = 72.dp).padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = ZcodeType.uiSm,
+                        color = zc.textSecondary,
+                        modifier = Modifier.widthIn(min = 72.dp).padding(horizontal = ZcodeSpacing.sm, vertical = ZcodeSpacing.xs),
                     )
                 }
             }
@@ -226,31 +243,29 @@ private fun MdDivider(modifier: Modifier) {
         modifier = modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+            .background(LocalZcodeColors.current.border),
     )
 }
 
 // ---------- 行内 spans → AnnotatedString ----------
 
 @Composable
-internal fun spansToAnnotated(spans: List<MdSpan>): AnnotatedString = remember(spans) {
-    buildAnnotatedString {
-        spans.forEach { span ->
-            when (span) {
-                is MdSpan.Plain -> append(span.text)
-                is MdSpan.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(span.text) }
-                is MdSpan.Italic -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(span.text) }
-                is MdSpan.Code -> withStyle(
-                    SpanStyle(fontFamily = FontFamily.Monospace, background = CODE_BG),
-                ) { append(" " + span.text + " ") }
-                is MdSpan.Link -> withStyle(SpanStyle(color = MaterialThemeColor.Link)) { append(span.text) }
-                is MdSpan.Math -> append(span.text) // 行内公式文字回退（渲染层 MdInline 集成 JLatexMath）
+internal fun spansToAnnotated(spans: List<MdSpan>): AnnotatedString {
+    val zc = LocalZcodeColors.current
+    return remember(spans, zc) {
+        buildAnnotatedString {
+            spans.forEach { span ->
+                when (span) {
+                    is MdSpan.Plain -> append(span.text)
+                    is MdSpan.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(span.text) }
+                    is MdSpan.Italic -> withStyle(SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)) { append(span.text) }
+                    is MdSpan.Code -> withStyle(
+                        SpanStyle(fontFamily = FontFamily.Monospace, background = zc.input),
+                    ) { append(" " + span.text + " ") }
+                    is MdSpan.Link -> withStyle(SpanStyle(color = zc.queued)) { append(span.text) }
+                    is MdSpan.Math -> append(span.text) // 行内公式文字回退（渲染层 MdInline 集成 JLatexMath）
+                }
             }
         }
     }
-}
-
-/** 主题无关的链接色（后续接 design token）。 */
-private object MaterialThemeColor {
-    val Link = Color(0xFF82B1FF)
 }
