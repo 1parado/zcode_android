@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -79,9 +80,13 @@ fun NewSessionScreen(
     LaunchedEffect(Unit) { focus.requestFocus() }
 
     Column(Modifier.fillMaxSize().imePadding()) {
+        // 修复依据（真机点击测试：× 显示在 y≈68、实际命中在 y≈140，差值=状态栏
+        // 高度）：enableEdgeToEdge 后内容画进状态栏底下，触摸被系统状态栏区域
+        // 拦截——顶栏必须加 statusBarsPadding，图标与命中区才对齐。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .padding(horizontal = ZcodeSpacing.sm, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
