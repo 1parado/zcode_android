@@ -262,6 +262,8 @@ class ChatRepository(
 
     /** 订阅重试退避阶梯下标；成功订阅后归零。 */
     private var retryDelayIndex = 0
+    /** 「零行快照 + 非零水位」矛盾快照的重订阅计数（上限 3，防真空会话死循环）。 */
+    private var emptySnapshotRetries = 0
     /** 退避重试协程：重订阅时取消旧的，同一时刻只有一个在跑。 */
     private var retryJob: Job? = null
     /** 已收到过首帧：重试期间保留已渲染的行，不把内容区刷回骨架屏。 */
@@ -474,9 +476,61 @@ class ChatRepository(
         // 任何到达的帧都算"有动静"：看门狗只关心静默，不关心是否被 apply（重复旧帧
         // 同样说明链路活着）。
         lastFrameAtMs = System.nanoTime()
+        // 修复依据（真机 20:34 现场日志「会话内容看过之后又变成没有消息」）：
+        // resync（recovery 快照）返回了 rows=0/state=null 的空快照，reducer 整表替换
+        // 语义把本地已有的 3 行对话清空，屏幕从"有内容"跳到"还没有消息"。
+        // 电脑端 CLI 正在跑长工具调用时本就静默（无 token 推送），看门狗按设计请求
+        // 重放，但服务端此刻快照为空——那是"重放时刻的瞬时事实"，不是"会话没有内容"。
+        // 防御：本地已有非空行时，空快照不应用；改走全新订阅（initial 快照由 CLI
+        // 恢复历史 Session 生成，已证实带完整行）。只有全新订阅也返回空，才接受
+        // "会话真的没有内容"。
+        if (frame.isSnapshot && frame.fromSeq == 0L) {
+            val snapRows = frame.snapshotObject()?.get("rows").asArrayOrNull()?.size ?: -1
+            val currentRows = reducer.snapshot(sessionId).rows.size
+            if (snapRows == 0 && currentRows > 0) {
+                ZLog.w(TAG, "empty snapshot for non-empty session ($currentRows rows), ignore & resubscribe")
+                resubscribeForFreshSnapshot()
+                return
+            }
+            // 修复依据（真机 20:43 现场日志）：打开会话时 initial 快照 rows=0 但
+            // toSeq=2896——服务端 CLI 冷恢复是异步的，首帧在历史行装载完成前发布，
+            // seq 已推进而行表为空。这是"恢复未完成"，不是"会话没有内容"。
+            // 不信任矛盾快照：重订阅走冷恢复重试（上限 3 次，防服务端真返回空会话时死循环）。
+            if (snapRows == 0 && frame.toSeq > 0L) {
+                if (emptySnapshotRetries >= 3) {
+                    ZLog.w(TAG, "empty snapshot seq=${frame.toSeq} persists after $emptySnapshotRetries retries, accept as-is")
+                } else {
+                    emptySnapshotRetries++
+                    ZLog.w(TAG, "empty snapshot with seq=${frame.toSeq} (retry $emptySnapshotRetries/3), resubscribing")
+                    resubscribeForFreshSnapshot()
+                    return
+                }
+            }
+        }
         val applied = reducer.apply(frame)
         ZLog.d(TAG, "onFrame topic=${frame.topic} applied=$applied")
         if (applied) publish()
+    }
+
+    /**
+     * 空快照防御后的重订阅：丢掉当前订阅，走 [subscribe]（带水位的重订阅会被服务端
+     * 按 replayable 补发，仍可能拿到空 recovery——所以这里显式清零 reducer 后按
+     * 无水位全新订阅，服务端走 CLI 冷恢复路径回完整快照）。
+     */
+    private fun resubscribeForFreshSnapshot() {
+        val p = connection.protocol.value ?: return
+        retryJob?.cancel()
+        retryJob = null
+        attachedProtocol = null
+        conversationSubscriptionId = null
+        hasDeliveredSnapshot = false
+        _loadState.value = ChatLoadState.Loading
+        // reducer 清零是关键：不清的话新快照到达前旧行还挂着，且 reducer 的 seq 水位
+        // 会让旧快照被当成"旧帧"丢弃。
+        reducer.reset()
+        lastSeq = 0
+        lastLogEpoch = null
+        subscribe(p)
     }
 
     /**
@@ -533,12 +587,17 @@ class ChatRepository(
         val st = reducer.snapshot(sessionId)
         lastSeq = st.seq
         lastLogEpoch = st.logEpoch
+        // 诊断（真机 20:32 现象：帧持续 applied=true 但屏幕空白）：行数必须落日志，
+        // 区分「快照/增量到达但归约后零行」与「有行但 UI 没渲染」。
+        ZLog.d(TAG, "publish rows=${st.rows.size} seq=${st.seq} state=${st.state != null}")
         // 首帧到达才算列表真的可用（ACK 成功但零帧是另一类故障，不能提前撤骨架屏）。
         if (!hasDeliveredSnapshot) {
             hasDeliveredSnapshot = true
             snapshotGraceJob?.cancel()
             snapshotGraceJob = null
             _loadState.value = ChatLoadState.Ready
+            // 拿到了可渲染的行：矛盾快照的重试计数归零（可能是换会话后复用本仓库实例）。
+            if (st.rows.isNotEmpty()) emptySnapshotRetries = 0
         }
         val revision = st.state?.get("revision")
         _ui.value = ChatUi(
