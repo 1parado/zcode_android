@@ -72,7 +72,7 @@ class SessionsOrderingTest {
             item("today", activity = nowDay * 86_400_000L + 1000),
             item("old", activity = (nowDay - 30) * 86_400_000L),
         )
-        val sections = SessionsOrdering.groupByRecency(list, { it }, nowDay)
+        val sections = SessionsOrdering.groupByRecency(list, nowDay)
         assertEquals(listOf("置顶", "今天", "昨天", "更早"), sections.map { it.title })
         assertEquals("pinned", sections[0].items.single().sessionId)
     }

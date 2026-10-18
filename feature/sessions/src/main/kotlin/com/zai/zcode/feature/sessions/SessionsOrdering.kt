@@ -31,10 +31,13 @@ object SessionsOrdering {
     /**
      * 分组：置顶 → 今天 → 昨天 → 更早（保持传入顺序）。
      * 返回有序段列表；空段不出现。
+     *
+     * 修复依据（v0.2.23 自检）：原签名带 [startOfDayMs] 回调参数但实现从未使用
+     * （天数直接按 activity/DAY_MS 与 nowEpochDay 比较），调用点只能传恒等 lambda，
+     * 属遗留死参数，按现语义收窄签名。
      */
     fun groupByRecency(
         list: List<SessionsRepository.SessionItem>,
-        startOfDayMs: (epochDay: Long) -> Long,
         nowEpochDay: Long,
     ): List<Section> {
         val sections = linkedMapOf<String, MutableList<SessionsRepository.SessionItem>>()

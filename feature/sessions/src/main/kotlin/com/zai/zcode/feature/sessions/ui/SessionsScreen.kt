@@ -171,7 +171,7 @@ fun SessionsScreen(
             )
         } else {
             val nowEpochDay = LocalDate.now().toEpochDay()
-            val sections = SessionsOrdering.groupByRecency(sessions, { it }, nowEpochDay)
+            val sections = SessionsOrdering.groupByRecency(sessions, nowEpochDay)
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
