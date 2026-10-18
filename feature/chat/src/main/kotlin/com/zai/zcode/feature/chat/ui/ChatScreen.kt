@@ -20,12 +20,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Stop
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,6 +42,7 @@ import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.design.components.EmptyState
 import com.zai.zcode.core.design.components.LiveDot
+import com.zai.zcode.core.design.components.ZcodeComposer
 import com.zai.zcode.core.design.components.ZcodeStatus
 import com.zai.zcode.core.design.jellyClickable
 import com.zai.zcode.core.network.ZcodeConnection
@@ -360,49 +355,19 @@ private fun JumpToLatestButton(count: Int, onClick: () -> Unit, modifier: Modifi
  *
  * 不锁输入：等待审批 / 运行中都允许继续打字，发送即排队（是不会冻结用户手的设计，
  * 与「先想好再一次性发」相反——远程操控场景里用户常常已经在打下一条指令）。
+ *
+ * 修复依据（真机 v0.2.22）：形状/配色改走 [ZcodeComposer]，与新建会话页共用同一份
+ * 组件。用户从草稿页发出第一条消息后原地进入本页，输入框若换了圆角与按钮位置，
+ * 这一瞬间会被读成"跳到了另一个应用"。
  */
 @Composable
 private fun ChatComposer(viewModel: ChatViewModel, isRunning: Boolean) {
-    val draft = viewModel.draft
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(ZcodeSpacing.md),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = viewModel::onDraftChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("发送消息…", style = ZcodeType.uiSm) },
-            maxLines = 4,
-            textStyle = ZcodeType.uiMd,
-        )
-        if (isRunning && draft.isBlank()) {
-            IconButton(onClick = viewModel::stop) {
-                Icon(
-                    Icons.Rounded.Stop,
-                    contentDescription = "停止",
-                    tint = LocalZcodeColors.current.error,
-                )
-            }
-        } else {
-            val enabled = draft.isNotBlank() && !viewModel.sending
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    // 修复依据（docs/ui-design.md §7 果冻按压）：发送是会话页最频繁的交互，
-                    // 按压缩放让「按下了」在抬指之前就被感知到。
-                    .jellyClickable(enabled = enabled, onClick = viewModel::send),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.ArrowUpward,
-                    contentDescription = "发送",
-                    tint = if (enabled) LocalZcodeColors.current.text else LocalZcodeColors.current.textTertiary,
-                )
-            }
-        }
-    }
+    ZcodeComposer(
+        value = viewModel.draft,
+        onValueChange = viewModel::onDraftChange,
+        onSend = viewModel::send,
+        // 运行中且用户还没打下一条 → 给停止；一旦开始打字，用户意图就变成"再说一句"
+        onStop = if (isRunning && viewModel.draft.isBlank()) viewModel::stop else null,
+        sendEnabled = viewModel.draft.isNotBlank() && !viewModel.sending,
+    )
 }

@@ -1,7 +1,5 @@
 package com.zai.zcode.feature.sessions.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,11 +10,9 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,9 +27,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.zai.zcode.core.design.LocalZcodeColors
-import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
+import com.zai.zcode.core.design.components.ZcodeComposer
 import com.zai.zcode.core.design.jellyClickable
 
 /**
@@ -110,36 +106,16 @@ fun NewSessionScreen(
             )
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(ZcodeSpacing.md),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
-        ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier.weight(1f).focusRequester(focus),
-                placeholder = { Text("发送消息…", style = ZcodeType.uiSm) },
-                maxLines = 6,
-                textStyle = ZcodeType.uiMd,
-            )
-            val enabled = text.isNotBlank() && !creating
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    // 修复依据（docs/ui-design.md §7 果冻按压）：发送是全 App 最高频的
-                    // 交互，按压缩放在抬指之前就给出触达确认。
-                    .jellyClickable(enabled = enabled, onClick = { onSubmit(text) }),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.ArrowUpward,
-                    contentDescription = "发送",
-                    tint = if (enabled) zc.text else zc.textTertiary,
-                )
-            }
-        }
+        // 修复依据（真机 v0.2.22）：与会话页共用 [ZcodeComposer]。草稿页发出第一条
+        // 消息后原地进入会话页，输入框形状必须连续，否则这一瞬间会被读成换了个应用。
+        ZcodeComposer(
+            value = text,
+            onValueChange = { text = it },
+            onSend = { onSubmit(text) },
+            sendEnabled = text.isNotBlank() && !creating,
+            // 草稿页输入的是"第一条指令"，常常是一整段需求说明，给到 6 行
+            maxLines = 6,
+            focusRequester = focus,
+        )
     }
 }
