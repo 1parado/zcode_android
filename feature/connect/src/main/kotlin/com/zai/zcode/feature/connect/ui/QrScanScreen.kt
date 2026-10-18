@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +41,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.zai.zcode.core.design.LocalZcodeColors
+import com.zai.zcode.core.design.ZcodeShape
+import com.zai.zcode.core.design.ZcodeSpacing
+import com.zai.zcode.core.design.ZcodeType
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -97,19 +100,21 @@ fun QrScanScreen(
             )
         }
         // 顶栏
+        // 修复依据（v0.2.24）：扫码层浮在相机预览之上，用黑色半透明压底保证可读，
+        // 但字阶/文案仍走 ZcodeType —— 相机画面是黑的，令牌只管文字与圆角。
         Surface(
             modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding(),
             color = Color.Black.copy(alpha = 0.55f),
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 12.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = ZcodeSpacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("扫码配对", style = MaterialTheme.typography.titleSmall, color = Color.White)
+                    Text("扫码配对", style = ZcodeType.uiMd, color = Color.White)
                     Text(
                         "对准电脑端 ZCode 显示的配对二维码",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = ZcodeType.uiXs,
                         color = Color.White.copy(alpha = 0.7f),
                     )
                 }
@@ -121,31 +126,28 @@ fun QrScanScreen(
             modifier = Modifier
                 .align(Alignment.Center)
                 .size(240.dp)
-                .background(Color.Transparent, RoundedCornerShape(16.dp)),
+                .background(Color.Transparent, ZcodeShape.dialog),
         )
-        if (message != null) {
+        if (message != null || permissionDenied || cameraErrorText != null) {
+            // 修复依据（v0.2.24）：错误/提示条不再用 errorContainer 大色块，
+            // 改黑色半透明浮条 + 语义红文字——在相机画面上整卡染红与 Zai 令牌
+            // 体系不符，且红色压在取景画面上会干扰扫码视觉。
             Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(ZcodeSpacing.screenPadding),
+                color = Color.Black.copy(alpha = 0.82f),
+                shape = ZcodeShape.card,
             ) {
                 Text(
-                    text = message,
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
-        }
-        if (permissionDenied || cameraErrorText != null) {
-            Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(16.dp),
-                color = MaterialTheme.colorScheme.errorContainer,
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Text(
-                    text = cameraErrorText ?: "相机权限被拒绝，请在系统设置中允许 ZCode 使用相机后重试",
-                    modifier = Modifier.padding(14.dp),
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = cameraErrorText
+                        ?: message
+                        ?: "相机权限被拒绝，请在系统设置中允许 ZCode 使用相机后重试",
+                    modifier = Modifier.padding(ZcodeSpacing.md),
+                    style = ZcodeType.uiSm,
+                    color = if (cameraErrorText != null || permissionDenied) {
+                        LocalZcodeColors.current.error
+                    } else {
+                        Color.White
+                    },
                 )
             }
         }
