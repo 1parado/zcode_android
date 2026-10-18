@@ -387,7 +387,14 @@ private fun ModelPickerSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(option.label, style = ZcodeType.uiMd, color = zc.text)
+                                // 长模型名（provider · model）两行完整展示——
+                                // 单行 Ellipsis 时用户看不到全名、也容易点不中目标项
+                                Text(
+                                    option.label,
+                                    style = ZcodeType.uiMd,
+                                    color = zc.text,
+                                    maxLines = 2,
+                                )
                             }
                             if (selected) {
                                 Icon(
@@ -634,10 +641,11 @@ private fun ComposerConfigBar(viewModel: ChatViewModel, onPickModel: () -> Unit)
             }
         }
         Spacer(Modifier.weight(1f))
-        // 模型入口（点击打开 ModelPickerSheet）
+        // 模型入口（点击打开 ModelPickerSheet）：底部弹层滚动列表——DropdownMenu
+        // 高度受限，长模型名（provider·model 两行）会被裁掉导致「选不了」。
         ConfigChip(
             icon = Icons.Rounded.Memory,
-            text = viewModel.currentModel?.modelId?.substringBeforeLast("/") ?: "模型",
+            text = viewModel.currentModel?.modelId?.substringAfterLast('/')?.take(18) ?: "模型",
             onClick = onPickModel,
         )
     }

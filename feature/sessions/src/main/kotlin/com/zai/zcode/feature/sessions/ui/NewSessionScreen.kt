@@ -1,5 +1,7 @@
 package com.zai.zcode.feature.sessions.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,8 +11,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Memory
+import androidx.compose.material.icons.rounded.Policy
+import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -22,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextAlign
@@ -50,6 +60,18 @@ fun NewSessionScreen(
     onDismissError: () -> Unit,
     onSubmit: (String) -> Unit,
     onCancel: () -> Unit,
+    /** 草稿页配置选择（模型/思考/模式），随 createSession 一次性带入。 */
+    modelOptions: List<com.zai.zcode.feature.sessions.SessionsViewModel.DraftModelOption> = emptyList(),
+    modelLoading: Boolean = false,
+    selectedModel: com.zai.zcode.feature.sessions.SessionsViewModel.DraftModelOption? = null,
+    onSelectModel: (com.zai.zcode.feature.sessions.SessionsViewModel.DraftModelOption) -> Unit = {},
+    selectedMode: String? = null,
+    onSelectMode: (String) -> Unit = {},
+    selectedThought: String? = null,
+    onSelectThought: (String) -> Unit = {},
+    modeOptions: List<com.zai.zcode.feature.sessions.SessionsViewModel.ModeOption> = emptyList(),
+    thoughtOptions: List<String> = emptyList(),
+    thoughtLabel: (String) -> String = { it },
 ) {
     val zc = LocalZcodeColors.current
     var text by remember { mutableStateOf("") }
@@ -106,6 +128,22 @@ fun NewSessionScreen(
             )
         }
 
+        // 草稿页配置行（用户报「新建会话没法选权限/思考/模型」）：与会话页
+        // ComposerConfigBar 同风格，选中项随 createSession 一次性带入。
+        DraftConfigBar(
+            modelOptions = modelOptions,
+            modelLoading = modelLoading,
+            selectedModel = selectedModel,
+            onSelectModel = onSelectModel,
+            selectedMode = selectedMode,
+            onSelectMode = onSelectMode,
+            selectedThought = selectedThought,
+            onSelectThought = onSelectThought,
+            modeOptions = modeOptions,
+            thoughtOptions = thoughtOptions,
+            thoughtLabel = thoughtLabel,
+        )
+
         // 修复依据（真机 v0.2.22）：与会话页共用 [ZcodeComposer]。草稿页发出第一条
         // 消息后原地进入会话页，输入框形状必须连续，否则这一瞬间会被读成换了个应用。
         ZcodeComposer(
@@ -117,5 +155,149 @@ fun NewSessionScreen(
             maxLines = 6,
             focusRequester = focus,
         )
+    }
+}
+
+/** 草稿页配置 chips：模式 / 思考档位 / 模型（与会话页 ComposerConfigBar 同风格）。 */
+@Composable
+private fun DraftConfigBar(
+    modelOptions: List<com.zai.zcode.feature.sessions.SessionsViewModel.DraftModelOption>,
+    modelLoading: Boolean,
+    selectedModel: com.zai.zcode.feature.sessions.SessionsViewModel.DraftModelOption?,
+    onSelectModel: (com.zai.zcode.feature.sessions.SessionsViewModel.DraftModelOption) -> Unit,
+    selectedMode: String?,
+    onSelectMode: (String) -> Unit,
+    selectedThought: String?,
+    onSelectThought: (String) -> Unit,
+    modeOptions: List<com.zai.zcode.feature.sessions.SessionsViewModel.ModeOption>,
+    thoughtOptions: List<String>,
+    thoughtLabel: (String) -> String,
+) {
+    val zc = LocalZcodeColors.current
+    var showModeMenu by remember { mutableStateOf(false) }
+    var showThoughtMenu by remember { mutableStateOf(false) }
+    var showModelMenu by remember { mutableStateOf(false) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ZcodeSpacing.md, vertical = 2.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(ZcodeSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Chip(
+            icon = Icons.Rounded.Policy,
+            text = modeOptions.firstOrNull { it.mode == selectedMode }?.label ?: "变更前确认",
+            onClick = { showModeMenu = true },
+        )
+        DropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+            modeOptions.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(option.label, style = ZcodeType.uiSm, color = zc.text)
+                            Text(option.description, style = ZcodeType.uiXs, color = zc.textTertiary)
+                        }
+                    },
+                    leadingIcon = {
+                        if (selectedMode == option.mode) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                null,
+                                Modifier.size(16.dp),
+                                tint = zc.running,
+                            )
+                        }
+                    },
+                    onClick = { onSelectMode(option.mode); showModeMenu = false },
+                )
+            }
+        }
+        Chip(
+            icon = Icons.Rounded.Psychology,
+            text = selectedThought?.let(thoughtLabel) ?: "中",
+            onClick = { showThoughtMenu = true },
+        )
+        DropdownMenu(expanded = showThoughtMenu, onDismissRequest = { showThoughtMenu = false }) {
+            thoughtOptions.forEach { level ->
+                DropdownMenuItem(
+                    text = { Text(thoughtLabel(level), style = ZcodeType.uiSm, color = zc.text) },
+                    leadingIcon = {
+                        if (selectedThought == level) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                null,
+                                Modifier.size(16.dp),
+                                tint = zc.running,
+                            )
+                        }
+                    },
+                    onClick = { onSelectThought(level); showThoughtMenu = false },
+                )
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Chip(
+            icon = Icons.Rounded.Memory,
+            // 模型名可能很长：显示 modelId 最后一段（GLM-5.3 / claude-sonnet-4 等）
+            text = selectedModel?.modelId?.substringAfterLast('/')
+                ?: if (modelLoading) "读取中…" else "模型",
+            onClick = { showModelMenu = true },
+        )
+        DropdownMenu(expanded = showModelMenu, onDismissRequest = { showModelMenu = false }) {
+            if (modelOptions.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text(if (modelLoading) "读取中…" else "没有可用模型", style = ZcodeType.uiSm) },
+                    onClick = {},
+                    enabled = false,
+                )
+            }
+            modelOptions.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        // 长模型名两行展示：provider · name 一行放不下
+                        Text(
+                            option.label,
+                            style = ZcodeType.uiSm,
+                            color = zc.text,
+                            maxLines = 2,
+                        )
+                    },
+                    leadingIcon = {
+                        if (selectedModel?.providerId == option.providerId &&
+                            selectedModel?.modelId == option.modelId
+                        ) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                null,
+                                Modifier.size(16.dp),
+                                tint = zc.running,
+                            )
+                        }
+                    },
+                    onClick = { onSelectModel(option); showModelMenu = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Chip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    onClick: () -> Unit,
+) {
+    val zc = LocalZcodeColors.current
+    Row(
+        Modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(50))
+            .background(zc.input)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(14.dp), tint = zc.textSecondary)
+        Spacer(Modifier.width(5.dp))
+        Text(text, style = ZcodeType.uiXs, color = zc.textSecondary, maxLines = 1)
     }
 }

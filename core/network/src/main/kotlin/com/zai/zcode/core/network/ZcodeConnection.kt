@@ -762,7 +762,14 @@ class ZcodeConnection(
      *
      * @param firstInput 首条输入文本。**必须非空**——为空等于建一个不可见的 draft。
      */
-    suspend fun createSession(firstInput: String? = null): CreateSessionResult {
+    suspend fun createSession(
+        firstInput: String? = null,
+        /** 草稿页选择的模型/思考/模式（createSessionRequestedConfigSchema，command.ts:66）。 */
+        providerId: String? = null,
+        modelId: String? = null,
+        thought: String? = null,
+        mode: String? = null,
+    ): CreateSessionResult {
         val p = _protocol.value ?: return CreateSessionResult.Failure(CreateSessionReason.NotConnected)
         val ws = _currentWorkspace.value ?: return CreateSessionResult.Failure(CreateSessionReason.NoWorkspace)
         // 修复依据(真机 v0.2.14"创建会话失败/新会话不出现在列表"):workspaceId 必须是
@@ -775,6 +782,24 @@ class ZcodeConnection(
                 put("workspaceId", com.zai.zcode.core.protocol.v4.workspaceKeyOf(ws.path, wsIdentity))
                 if (!firstInput.isNullOrBlank()) {
                     put("firstInput", buildJsonObject { put("text", firstInput) })
+                }
+                // 修复依据（用户报「新建会话没法选权限/思考/模型」）：createSession 命令
+                // payload 支持 config（command.ts:66 → createSessionRequestedConfigSchema：
+                // {modelSelection{providerId,modelId,options{reasoningLevel}}, mode}）。
+                // 一次构造完整 config（modelSelection 与 mode 同场）。
+                if (providerId != null || modelId != null || !mode.isNullOrBlank()) {
+                    put("config", buildJsonObject {
+                        if (providerId != null && modelId != null) {
+                            put("modelSelection", buildJsonObject {
+                                put("providerId", providerId)
+                                put("modelId", modelId)
+                                if (!thought.isNullOrBlank()) {
+                                    put("options", buildJsonObject { put("reasoningLevel", thought) })
+                                }
+                            })
+                        }
+                        if (!mode.isNullOrBlank()) put("mode", mode)
+                    })
                 }
             }
             val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(

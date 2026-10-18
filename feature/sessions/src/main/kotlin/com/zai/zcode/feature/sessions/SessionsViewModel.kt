@@ -125,6 +125,60 @@ class SessionsViewModel @Inject constructor(
     fun openDraftSession() {
         createError = null
         draftSession = true
+        // 草稿页配置选择器需要模型列表：进入草稿页时拉取（失败静默，UI 显示空态）
+        loadDraftModelOptions()
+    }
+
+    /** 草稿页可选模型（model-selection.getView 扁平投影；与 ChatRepository 同形状）。 */
+    data class DraftModelOption(
+        val providerId: String,
+        val modelId: String,
+        val label: String,
+    )
+
+    var draftModelOptions by mutableStateOf<List<DraftModelOption>>(emptyList())
+        private set
+    var draftModelLoading by mutableStateOf(false)
+        private set
+    // 草稿页选择状态：UI 是唯一写入方（点选 chip），公开 setter
+    var selectedModel by mutableStateOf<DraftModelOption?>(null)
+    var selectedMode by mutableStateOf<String?>(null)
+    var selectedThought by mutableStateOf<String?>(null)
+
+    val modeOptions = listOf(
+        ModeOption("plan", "计划模式", "编辑前先出计划"),
+        ModeOption("guarded", "变更前确认", "改动前先问我"),
+        ModeOption("yolo", "自主模式", "在有风险时询问"),
+        ModeOption("build", "完全访问", "减少确认次数"),
+    )
+    val thoughtOptions = listOf("low", "medium", "high", "xhigh", "max")
+
+    data class ModeOption(val mode: String, val label: String, val description: String)
+
+    fun thoughtLabel(v: String): String = when (v) {
+        "low" -> "低"; "medium" -> "中"; "high" -> "高"
+        "xhigh" -> "极高"; "max" -> "最高"; else -> v
+    }
+
+    private fun loadDraftModelOptions() {
+        if (draftModelLoading) return
+        draftModelLoading = true
+        viewModelScope.launch {
+            val p = connection.protocol.value
+            draftModelOptions = if (p == null) emptyList() else runCatching {
+                p.modelSelectionView()?.providers?.flatMap { provider ->
+                    provider.models.map { m ->
+                        DraftModelOption(
+                            providerId = provider.providerId,
+                            modelId = m.modelId,
+                            label = if (provider.providerName.isBlank()) m.name
+                            else "${provider.providerName} · ${m.name}",
+                        )
+                    }
+                } ?: emptyList()
+            }.getOrElse { emptyList() }
+            draftModelLoading = false
+        }
     }
 
     fun closeDraftSession() {
@@ -135,13 +189,26 @@ class SessionsViewModel @Inject constructor(
      * 用首条消息真正创建会话（对齐 chat_page.dart:687 / session-mgmt.ts:105）。
      * 首条文本非空是硬前提——空 firstInput 只会建出不可见的 draft。
      */
-    fun startSession(firstMessage: String, onCreated: (sessionId: String) -> Unit) {
+    fun startSession(
+        firstMessage: String,
+        onCreated: (sessionId: String) -> Unit,
+        providerId: String? = null,
+        modelId: String? = null,
+        thought: String? = null,
+        mode: String? = null,
+    ) {
         val text = firstMessage.trim()
         if (text.isEmpty() || creating) return
         creating = true
         createError = null
         viewModelScope.launch {
-            when (val result = connection.createSession(firstInput = text)) {
+            when (val result = connection.createSession(
+                firstInput = text,
+                providerId = providerId,
+                modelId = modelId,
+                thought = thought,
+                mode = mode,
+            )) {
                 is ZcodeConnection.CreateSessionResult.Success -> {
                     creating = false
                     draftSession = false

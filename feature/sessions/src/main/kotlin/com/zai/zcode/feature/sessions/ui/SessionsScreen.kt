@@ -201,8 +201,28 @@ fun SessionsScreen(
                 creating = creating,
                 error = createError,
                 onDismissError = viewModel::dismissCreateError,
-                onSubmit = { text -> viewModel.startSession(text, onOpenSession) },
+                onSubmit = { text ->
+                    viewModel.startSession(
+                        text,
+                        onOpenSession,
+                        providerId = viewModel.selectedModel?.providerId,
+                        modelId = viewModel.selectedModel?.modelId,
+                        thought = viewModel.selectedThought,
+                        mode = viewModel.selectedMode,
+                    )
+                },
                 onCancel = viewModel::closeDraftSession,
+                modelOptions = viewModel.draftModelOptions,
+                modelLoading = viewModel.draftModelLoading,
+                selectedModel = viewModel.selectedModel,
+                onSelectModel = { viewModel.selectedModel = it },
+                selectedMode = viewModel.selectedMode,
+                onSelectMode = { viewModel.selectedMode = it },
+                selectedThought = viewModel.selectedThought,
+                onSelectThought = { viewModel.selectedThought = it },
+                modeOptions = viewModel.modeOptions,
+                thoughtOptions = viewModel.thoughtOptions,
+                thoughtLabel = viewModel::thoughtLabel,
             )
             return@Column
         }
