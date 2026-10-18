@@ -55,6 +55,11 @@ object V4 {
     const val METHOD_LIST_PINNED_TASKS = "listPinnedTasks"
     const val METHOD_LIST_ARCHIVED_TASKS = "listArchivedTasks"
 
+    /** 任务卡长按菜单（官方 zcodeTaskServiceAdapter: archiveTask/deleteTask/setTaskPinned）。 */
+    const val METHOD_ARCHIVE_TASK = "archiveTask"
+    const val METHOD_DELETE_TASK = "deleteTask"
+    const val METHOD_SET_TASK_PINNED = "setTaskPinned"
+
     // PROTOCOL_V4_LIMITS（客户端关心的子集）
     const val MAX_FRAME_BYTES = 1024 * 1024
     const val ASSEMBLY_MAX_BYTES = 16 * 1024 * 1024

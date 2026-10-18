@@ -246,7 +246,7 @@ fun SessionsScreen(
                             section.title,
                             style = ZcodeType.uiXs,
                             color = zc.textTertiary,
-                            modifier = Modifier.padding(vertical = ZcodeSpacing.xs),
+                            modifier = Modifier.padding(top = ZcodeSpacing.sm, bottom = ZcodeSpacing.xs),
                         )
                     }
                     items(
@@ -255,6 +255,9 @@ fun SessionsScreen(
                         contentType = { "taskCard" },
                     ) { i ->
                         val item = section.items[i]
+                        // 长按菜单（官方 parity）：置顶/归档/删除。showMenu 按卡独立。
+                        var showMenu by remember(item.sessionId) { mutableStateOf(false) }
+                        var showDeleteConfirm by remember(item.sessionId) { mutableStateOf(false) }
                         TaskCard(
                             item = item,
                             relativeTime = SessionsOrdering.relativeTime(item.lastActivityAt),
@@ -263,7 +266,34 @@ fun SessionsScreen(
                                 viewModel.markSeen(item.sessionId)
                                 onOpenSession(item.sessionId)
                             },
+                            onLongClick = { showMenu = true },
+                            showMenu = showMenu,
+                            onDismissMenu = { showMenu = false },
+                            onArchive = { viewModel.archiveTask(item.sessionId) },
+                            onDelete = { showDeleteConfirm = true },
+                            onTogglePin = { viewModel.togglePinned(item.sessionId, item.pinned) },
                         )
+                        if (showDeleteConfirm) {
+                            androidx.compose.material3.AlertDialog(
+                                onDismissRequest = { showDeleteConfirm = false },
+                                title = { Text("删除这个会话？", style = ZcodeType.uiMd) },
+                                text = { Text(
+                                    "「" + item.title + "」将被永久删除，电脑端的会话记录一并移除。",
+                                    style = ZcodeType.uiSm,
+                                ) },
+                                confirmButton = {
+                                    androidx.compose.material3.TextButton(onClick = {
+                                        showDeleteConfirm = false
+                                        viewModel.deleteTask(item.sessionId)
+                                    }) { Text("删除", color = zc.error) }
+                                },
+                                dismissButton = {
+                                    androidx.compose.material3.TextButton(onClick = { showDeleteConfirm = false }) {
+                                        Text("取消")
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }

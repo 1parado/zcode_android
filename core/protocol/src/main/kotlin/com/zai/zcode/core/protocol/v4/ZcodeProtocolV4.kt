@@ -276,6 +276,69 @@ class ZcodeProtocolV4(
     ): List<TaskMetaView> =
         requestTaskList(V4.METHOD_LIST_ARCHIVED_TASKS, workspacePath, workspaceIdentity, timeoutMs)
 
+    /**
+     * 归档 / 删除 / 置顶一个任务（zcode-task 通道，官方 zcodeTaskServiceAdapter 同名方法）。
+     * 参数形状与 listTasks 同族：{taskId, workspacePath, workspaceIdentity?}。
+     * 操作成功后列表变更由桌面端 task_meta_changed 广播驱动 sessions-index 更新，
+     * 落盘索引由手机端下次 listTasks 重拉反映。
+     */
+    suspend fun archiveTask(
+        taskId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = 15_000,
+    ): Boolean = taskMutation(V4.METHOD_ARCHIVE_TASK, taskId, workspacePath, workspaceIdentity, timeoutMs)
+
+    suspend fun deleteTask(
+        taskId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = 15_000,
+    ): Boolean = taskMutation(V4.METHOD_DELETE_TASK, taskId, workspacePath, workspaceIdentity, timeoutMs)
+
+    suspend fun setTaskPinned(
+        taskId: String,
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        pinned: Boolean = true,
+        timeoutMs: Long = 15_000,
+    ): Boolean {
+        val scope = buildJsonObject {
+            put("taskId", taskId)
+            put("workspacePath", workspacePath)
+            if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+            put("pinned", pinned)
+        }
+        val result = channel.request(
+            V4.CHANNEL_ZCODE_TASK,
+            V4.METHOD_SET_TASK_PINNED,
+            buildJsonArray { add(scope) },
+            timeoutMs,
+        )
+        return result != null
+    }
+
+    private suspend fun taskMutation(
+        method: String,
+        taskId: String,
+        workspacePath: String,
+        workspaceIdentity: String?,
+        timeoutMs: Long,
+    ): Boolean {
+        val scope = buildJsonObject {
+            put("taskId", taskId)
+            put("workspacePath", workspacePath)
+            if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+        }
+        val result = channel.request(
+            V4.CHANNEL_ZCODE_TASK,
+            method,
+            buildJsonArray { add(scope) },
+            timeoutMs,
+        )
+        return result != null
+    }
+
     private suspend fun requestTaskList(
         method: String,
         workspacePath: String,

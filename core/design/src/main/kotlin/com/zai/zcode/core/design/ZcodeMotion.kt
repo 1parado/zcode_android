@@ -11,6 +11,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.ripple
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
@@ -128,14 +130,28 @@ fun Modifier.jellyClickable(
     onClick: () -> Unit,
     enabled: Boolean = true,
     onClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
 ): Modifier {
     val source = remember { MutableInteractionSource() }
-    return this
-        .jellyPress(source, enabled)
-        .clickable(
+    val clickModifier = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            interactionSource = source,
+            indication = ripple(),
+            enabled = enabled,
+            onClickLabel = onClickLabel,
+            onLongClickLabel = onClickLabel,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
+    } else {
+        Modifier.clickable(
             interactionSource = source,
             enabled = enabled,
             onClickLabel = onClickLabel,
             onClick = onClick,
         )
+    }
+    return this
+        .jellyPress(source, enabled)
+        .then(clickModifier)
 }

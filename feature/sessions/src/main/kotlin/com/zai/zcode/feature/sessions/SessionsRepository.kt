@@ -154,6 +154,39 @@ class SessionsRepository(
         localStoreRef?.setPinned(sessionId, pinned)
     }
 
+    /**
+     * 归档任务（长按菜单）：服务端 archiveTask 权威 + 重拉落盘索引。
+     * 修复依据（官方 parity）：archiveTask 后桌面 task_meta_changed 广播更新
+     * sessions-index；手机端本地也立刻重拉一次索引，列表当帧移除该卡。
+     */
+    suspend fun archiveTask(sessionId: String) {
+        val p = connection.protocol.value ?: return
+        val ws = _workspacePath.value ?: return
+        runCatching { p.archiveTask(sessionId, ws, workspaceIdentity) }
+            .onFailure { ZLog.w(TAG, "archiveTask failed: ${it.message}") }
+        // 服务端确认后重拉（无论成败——归档失败时不重拉，保留卡片）
+        refreshIndex()
+    }
+
+    /** 删除任务（长按菜单，危险操作由 UI 确认）。 */
+    suspend fun deleteTask(sessionId: String) {
+        val p = connection.protocol.value ?: return
+        val ws = _workspacePath.value ?: return
+        runCatching { p.deleteTask(sessionId, ws, workspaceIdentity) }
+            .onFailure { ZLog.w(TAG, "deleteTask failed: ${it.message}") }
+        // 删除是终态：无论服务端成败都重拉索引反映真实状态
+        refreshIndex()
+    }
+
+    /** 服务端置顶（与本地 setPinned 并存：长按菜单用服务端权威）。 */
+    suspend fun setTaskPinnedServer(sessionId: String, pinned: Boolean) {
+        val p = connection.protocol.value ?: return
+        val ws = _workspacePath.value ?: return
+        runCatching { p.setTaskPinned(sessionId, ws, workspaceIdentity, pinned) }
+            .onFailure { ZLog.w(TAG, "setTaskPinned failed: ${it.message}") }
+        refreshIndex()
+    }
+
     private val _workspacePath = MutableStateFlow<String?>(null)
     val workspacePath: StateFlow<String?> = _workspacePath.asStateFlow()
 

@@ -2,6 +2,7 @@ package com.zai.zcode.feature.sessions.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,6 +47,12 @@ fun TaskCard(
     relativeTime: String?,
     absoluteTime: String?,
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
+    showMenu: Boolean = false,
+    onDismissMenu: () -> Unit = {},
+    onArchive: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onTogglePin: () -> Unit = {},
 ) {
     val zc = LocalZcodeColors.current
     val status = item.toStatus()
@@ -55,7 +62,7 @@ fun TaskCard(
             .background(zc.card, ZcodeShape.card)
             // 修复依据（docs/ui-design.md §7 果冻按压）：任务卡是列表里最高频的点击目标，
             // 按下立即缩到 0.96 再弹簧回弹，触达确认早于 ripple。
-            .jellyClickable(onClick = onClick)
+            .jellyClickable(onClick = onClick, onLongClick = onLongClick, onClickLabel = item.title)
             // 修复依据（真机 v0.2.19）：stale 行只有落盘索引，标题与时间可信、实时状态不可知。
             // 逐卡降饱和而不是整屏降——同一列表里 runtime 在线的行保持原样，用户一眼能
             // 分清"哪些是实时的、哪些是上次见到的"。
@@ -70,6 +77,16 @@ fun TaskCard(
         ) {
             LiveDot(status)
             Spacer(Modifier.width(ZcodeSpacing.sm))
+            // 错误红点（官方 deriveTaskLeadingIndicator：error 状态行内红点指示，
+            // 不依赖状态文字颜色盲区）
+            if (item.phase == "error") {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .background(zc.error, androidx.compose.foundation.shape.CircleShape),
+                )
+                Spacer(Modifier.width(ZcodeSpacing.xs))
+            }
             Text(statusLabel(item), style = ZcodeType.uiXs, color = statusColor(status), modifier = Modifier.weight(1f))
             if (item.pinned) {
                 Icon(
@@ -143,6 +160,27 @@ fun TaskCard(
                 Spacer(Modifier.width(ZcodeSpacing.xs))
                 Text("后台工作运行中", style = ZcodeType.uiXs, color = zc.textTertiary)
             }
+        }
+    }
+
+    // 长按菜单：置顶 / 归档 / 删除（官方任务卡右键菜单的移动端形态）
+    if (showMenu) {
+        androidx.compose.material3.DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = onDismissMenu,
+        ) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text(if (item.pinned) "取消置顶" else "置顶", style = ZcodeType.uiSm) },
+                onClick = { onDismissMenu(); onTogglePin() },
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("归档", style = ZcodeType.uiSm) },
+                onClick = { onDismissMenu(); onArchive() },
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text("删除", style = ZcodeType.uiSm, color = zc.error) },
+                onClick = { onDismissMenu(); onDelete() },
+            )
         }
     }
 }

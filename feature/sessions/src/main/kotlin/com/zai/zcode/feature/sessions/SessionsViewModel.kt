@@ -89,13 +89,23 @@ class SessionsViewModel @Inject constructor(
         }
     }
 
+    // ── 长按菜单操作（官方 parity：置顶/归档/删除）──
+
+    fun archiveTask(sessionId: String) {
+        viewModelScope.launch { repository.archiveTask(sessionId) }
+    }
+
+    fun deleteTask(sessionId: String) {
+        viewModelScope.launch { repository.deleteTask(sessionId) }
+    }
+
+    fun togglePinned(sessionId: String, current: Boolean) {
+        viewModelScope.launch { repository.setTaskPinnedServer(sessionId, !current) }
+    }
+
     /** 打开会话：记录已读水位（未读消除）。 */
     fun markSeen(sessionId: String) {
         viewModelScope.launch { repository.markSeen(sessionId) }
-    }
-
-    fun togglePinned(sessionId: String, pinned: Boolean) {
-        viewModelScope.launch { repository.setPinned(sessionId, pinned) }
     }
 
     /** 创建中/失败提示（UI 局部状态）。 */
