@@ -97,6 +97,17 @@ fun ChatScreen(
         settledCount = ui.rows.size
     }
 
+    // 上滑加载更早历史：滚到顶（firstVisibleItemIndex==0 且停稳）触发，对齐官方
+    // loadOlder 的"滑到窗口首行再拉"节奏。collectIsDistinctFrom 无法直接用，
+    // 用 derivedStateOf 只在跨入顶部时触发一次。
+    val hasMoreHistory by viewModel.hasMoreHistory.collectAsState()
+    val atTop by remember {
+        derivedStateOf { listState.firstVisibleItemIndex == 0 && ui.rows.isNotEmpty() }
+    }
+    LaunchedEffect(atTop) {
+        if (atTop && hasMoreHistory) viewModel.loadOlder()
+    }
+
     LaunchedEffect(atBottom) {
         if (atBottom) pendingCount = 0
     }
@@ -114,6 +125,7 @@ fun ChatScreen(
                 rows = ui.rows,
                 listState = listState,
                 loadState = loadState,
+                hasMoreHistory = hasMoreHistory,
                 onRetry = viewModel::retrySubscribe,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
@@ -228,6 +240,7 @@ private fun ChatRowList(
     rows: List<ChatRepository.ChatRowKind>,
     listState: LazyListState,
     loadState: ChatLoadState,
+    hasMoreHistory: Boolean,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -237,6 +250,18 @@ private fun ChatRowList(
         contentPadding = PaddingValues(ZcodeSpacing.screenPadding),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        // 顶部历史分页指示：到顶后显示加载态或"已到最早"
+        if (rows.isNotEmpty() && loadState == ChatLoadState.Ready) {
+            item(key = "history_header", contentType = "historyHeader") {
+                Text(
+                    if (hasMoreHistory) "上滑加载更早消息…" else "已经是最早的消息了",
+                    style = ZcodeType.uiXs,
+                    color = LocalZcodeColors.current.textTertiary,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        }
         items(
             items = rows,
             key = { it.rowId },

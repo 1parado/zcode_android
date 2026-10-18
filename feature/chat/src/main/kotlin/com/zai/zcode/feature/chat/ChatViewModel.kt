@@ -44,6 +44,15 @@ class ChatViewModel @Inject constructor(
 
     val ui get() = repository.ui
 
+    /** 是否还有更早的历史（上滑分页指示）。 */
+    val hasMoreHistory: StateFlow<Boolean> =
+        repository.hasMoreHistory.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /** 用户上滑到顶：向上翻一页历史。 */
+    fun loadOlder() {
+        repository.loadOlder()
+    }
+
     /**
      * 会话加载态：区分「在等」/「电脑端 runtime 没起来」/「读不出来」。
      * 与 [ui] 分离是因为「零行」有两种截然不同的含义：会话真的还没有内容，

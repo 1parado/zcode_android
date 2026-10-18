@@ -518,29 +518,41 @@ class ChatRepository(
     }
 
     /**
-     * 历史行回填：rowsRange 从尾部向前拉一页（200 行）seed 进 reducer。
+     * 历史行回填/上滑加载：rowsRange 从窗口首行向前拉一页 seed 进 reducer。
      *
-     * 单飞 + 有界：只拉一页（手机屏不可能一屏滚出 200 行之前），hasMore 时由用户
-     * 上滑再拉（loadOlder 留给后续版本；当前先解决"打开看不到任何历史"的主诉）。
-     * 拉取失败静默（快照路径不可用时的降级，不打断实时流）。
+     * 对齐官方 conversationProjectionStore.loadOlder（游标 = 当前窗口首行 rowId，
+     * 单飞防重入）。首屏快照只带尾部 60 行（snapshotTailWindowRows），滑到顶时
+     * UI 调 [loadOlder] 继续向上翻；快照零行（CLI 冷恢复中）时作为首屏兜底拉一次。
      */
     private var historyBackfillJob: kotlinx.coroutines.Job? = null
-    private fun loadHistoryBackfill() {
+    private fun loadHistoryBackfill() = loadOlderInternal()
+
+    /** UI 上滑到顶时调用：向上翻一页历史。返回是否有更多（供 UI 显示"没有更早的消息"）。 */
+    fun loadOlder() {
+        loadOlderInternal()
+    }
+
+    private fun loadOlderInternal() {
         if (historyBackfillJob?.isActive == true) return
         historyBackfillJob = scope.launch {
             try {
                 val p = connection.protocol.value ?: return@launch
+                // 游标 = 当前已加载的最小 rowId；无行（首屏兜底）时从尾部拉
+                val beforeRowId = reducer.snapshot(sessionId).rows
+                    .minOfOrNull { RowView(it).rowId ?: Long.MAX_VALUE }
+                    ?.takeIf { it != Long.MAX_VALUE }
                 val page = p.conversationRowsRange(
                     sessionId = sessionId,
                     workspacePath = workspacePath,
                     workspaceIdentity = workspaceIdentity,
+                    beforeRowId = beforeRowId,
                 )
                 if (page == null) {
-                    ZLog.w(TAG, "history backfill: rowsRange returned non-object")
+                    ZLog.w(TAG, "history loadOlder: rowsRange returned non-object")
                     return@launch
                 }
                 reducer.seedRows(page.rows)
-                ZLog.i(TAG, "history backfill: seeded ${page.rows.size} rows (hasMore=${page.hasMore})")
+                ZLog.i(TAG, "history loadOlder: before=$beforeRowId got=${page.rows.size} hasMore=${page.hasMore}")
                 if (page.rows.isNotEmpty()) {
                     // 拿到了可渲染的历史行，撤掉骨架屏
                     if (!hasDeliveredSnapshot) {
@@ -551,11 +563,16 @@ class ChatRepository(
                     }
                     publish()
                 }
+                _hasMoreHistory.value = page.hasMore
             } catch (e: Exception) {
-                ZLog.w(TAG, "history backfill failed: ${e.message}")
+                ZLog.w(TAG, "history loadOlder failed: ${e.message}")
             }
         }
     }
+
+    /** 是否还有更早的历史（rowsRange.hasMore 投影；UI 到顶提示用）。 */
+    private val _hasMoreHistory = MutableStateFlow(true)
+    val hasMoreHistory: StateFlow<Boolean> = _hasMoreHistory.asStateFlow()
 
     /**
      * seq 空洞 → resyncConversationV4 整表重放（[ConversationReducer.onSeqGap]）。

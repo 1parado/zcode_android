@@ -16,13 +16,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,20 +64,44 @@ import kotlinx.coroutines.delay
  * 2. **kind → 渲染路径在编译期穷尽**——[ChatRepository.ChatRowKind] 是 sealed interface，
  *    `when (row)` 不加 else 分支。服务端新增行类型时这里直接编译不过，逼着显式补渲染路径，
  *    而不是让新行悄悄掉进兜底。
+ *
+ * 入场动效（docs/ui-design.md §7）：新行淡入 + 8dp 上移，180ms collapseEasing——
+ * 消息"出现"而不是"跳现"。只对新增行播一次：动画状态按 rowId 记账，历史回填
+ * 批量插入的行也各自淡入，但同一行不会重播。
  */
 @Composable
 internal fun ChatRowView(row: ChatRepository.ChatRowKind) {
-    when (row) {
-        is ChatRepository.ChatRowKind.UserInput -> UserInputRow(row)
-        is ChatRepository.ChatRowKind.AssistantText -> AssistantTextRow(row)
-        is ChatRepository.ChatRowKind.Reasoning -> ReasoningRow(row)
-        is ChatRepository.ChatRowKind.ToolCall -> ToolCallRow(row)
-        is ChatRepository.ChatRowKind.TurnHeader -> TurnHeaderRow(row)
-        is ChatRepository.ChatRowKind.Subagent -> SubagentRow(row)
-        is ChatRepository.ChatRowKind.Artifact -> ArtifactRow(row)
-        is ChatRepository.ChatRowKind.HookInvocation -> HookInvocationRow(row)
-        is ChatRepository.ChatRowKind.TimelineMarker -> TimelineMarkerRow(row)
-        is ChatRepository.ChatRowKind.Unknown -> UnknownRow(row)
+    // 入场动效：remember(rowId) 的初始 alpha/offset 是 0，首帧后 animateFloatAsState
+    // 推到 1。历史行（回填）同样走这一路径，但只播一次不随重组重播。
+    var appeared by remember(row.rowId) { mutableStateOf(false) }
+    LaunchedEffect(row.rowId) { appeared = true }
+    val alpha by animateFloatAsState(
+        targetValue = if (appeared) 1f else 0f,
+        animationSpec = tween(ZcodeMotion.COLLAPSE_MS, easing = ZcodeMotion.collapseEasing),
+        label = "rowAlpha",
+    )
+    val offsetY by animateDpAsState(
+        targetValue = if (appeared) 0.dp else 8.dp,
+        animationSpec = tween(ZcodeMotion.COLLAPSE_MS, easing = ZcodeMotion.collapseEasing),
+        label = "rowOffset",
+    )
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer { this.alpha = alpha; translationY = offsetY.toPx() },
+    ) {
+        when (row) {
+            is ChatRepository.ChatRowKind.UserInput -> UserInputRow(row)
+            is ChatRepository.ChatRowKind.AssistantText -> AssistantTextRow(row)
+            is ChatRepository.ChatRowKind.Reasoning -> ReasoningRow(row)
+            is ChatRepository.ChatRowKind.ToolCall -> ToolCallRow(row)
+            is ChatRepository.ChatRowKind.TurnHeader -> TurnHeaderRow(row)
+            is ChatRepository.ChatRowKind.Subagent -> SubagentRow(row)
+            is ChatRepository.ChatRowKind.Artifact -> ArtifactRow(row)
+            is ChatRepository.ChatRowKind.HookInvocation -> HookInvocationRow(row)
+            is ChatRepository.ChatRowKind.TimelineMarker -> TimelineMarkerRow(row)
+            is ChatRepository.ChatRowKind.Unknown -> UnknownRow(row)
+        }
     }
 }
 
@@ -134,29 +161,41 @@ private fun AssistantTextRow(row: ChatRepository.ChatRowKind.AssistantText) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
-        // 复制入口只在非流式时展示：流式中内容还在变，复制到一半的文本没有意义，
-        // 且按钮常驻会在每条回复开头闪一下。
-        if (!row.streaming && row.text.length > 80) {
+        MarkdownContent(raw = row.text, isStreaming = row.streaming)
+        // 修复依据（用户报「无法复制 Agent 回复」）：复制按钮移到正文下方且流式一结束
+        // 即出现（此前藏在右上角且仅 >80 字才显示，用户找不到）。长回复是文档，
+        // "操作"（复制）放内容末尾是阅读动线的自然终点。
+        if (!row.streaming) {
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    if (copied) "已复制 ✓" else "复制全文",
-                    style = ZcodeType.uiXs,
-                    color = if (copied) zc.running else zc.textTertiary,
-                    modifier = Modifier
+                Row(
+                    Modifier
                         .clip(ZcodeShape.control)
                         .clickable {
                             clipboard.setText(AnnotatedString(row.text))
                             copied = true
                         }
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.ContentCopy,
+                        contentDescription = "复制回复",
+                        modifier = Modifier.size(12.dp),
+                        tint = if (copied) zc.running else zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (copied) "已复制" else "复制",
+                        style = ZcodeType.uiXs,
+                        color = if (copied) zc.running else zc.textTertiary,
+                    )
+                }
             }
         }
-        MarkdownContent(raw = row.text, isStreaming = row.streaming)
         // 修复依据（spec 8.6「无 emoji」）：原先用 Text("●") 当流式指示，那是字形不是矢量，
         // 不同字体会渲染成不同东西（乃至豆腐块）。走 LiveDot + 呼吸动画。
         if (row.streaming) {
