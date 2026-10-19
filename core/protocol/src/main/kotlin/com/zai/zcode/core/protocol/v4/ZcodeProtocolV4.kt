@@ -432,13 +432,22 @@ class ZcodeProtocolV4(
      * ChannelClient 事件流（terminal 监听 id 命中）调用。
      */
     fun dispatchTerminalEvent(payload: Any?) {
-        val obj = payload as? JsonObject ?: return
-        val id = obj["id"].asStringOrNull() ?: return
-        obj["data"].asStringOrNull()?.let { data ->
-            if (id == boundTerminalId) onTerminalData?.invoke(id, data)
-        }
-        obj["exitCode"].asLongOrNull()?.let { code ->
-            if (id == boundTerminalId) onTerminalExit?.invoke(id, code.toInt())
+        // 官方 proxy-channel：动态事件 fire 的是**原始值**（terminal.dataEmitter.fire
+        // 的是纯字符串 PTY 输出），不包 {id, ...} 信封——id 语义由 EventListen 的 arg
+        // （即 boundTerminalId）承载。JsonObject 形状保留兼容（未来可能加信封）。
+        when (payload) {
+            is String -> {
+                if (boundTerminalId != null) onTerminalData?.invoke(boundTerminalId!!, payload)
+            }
+            is JsonObject -> {
+                val id = payload["id"].asStringOrNull() ?: return
+                payload["data"].asStringOrNull()?.let { data ->
+                    if (id == boundTerminalId) onTerminalData?.invoke(id, data)
+                }
+                payload["exitCode"].asLongOrNull()?.let { code ->
+                    if (id == boundTerminalId) onTerminalExit?.invoke(id, code.toInt())
+                }
+            }
         }
     }
 
