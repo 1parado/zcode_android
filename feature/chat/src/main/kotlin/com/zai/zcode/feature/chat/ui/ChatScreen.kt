@@ -31,6 +31,10 @@ import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Policy
 import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Terminal
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -51,6 +55,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.zai.zcode.core.design.LocalZcodeColors
@@ -94,6 +100,8 @@ fun ChatScreen(
     var showModelPicker by remember { mutableStateOf(false) }
     // Git 分支切换弹层
     var showBranchPicker by remember { mutableStateOf(false) }
+    // 终端弹层（官方切换面板「终端」tab 的移动端形态）
+    var showTerminal by remember { mutableStateOf(false) }
 
     // 是否已停在底部：决定「跟随新内容」还是「累计未读」。
     // derivedStateOf 让它只在跨越阈值时变，滚动过程中不触发额外重组。
@@ -147,7 +155,14 @@ fun ChatScreen(
                 onWatchScreen = onWatchScreen,
                 onPickModel = { showModelPicker = true },
                 onPickBranch = { showBranchPicker = true },
+                onOpenTerminal = { showTerminal = true },
             )
+            if (showTerminal) {
+                TerminalSheet(
+                    viewModel = viewModel,
+                    onDismiss = { viewModel.closeTerminal(); showTerminal = false },
+                )
+            }
             if (showBranchPicker) {
                 BranchPickerSheet(
                     viewModel = viewModel,
@@ -288,6 +303,7 @@ private fun ChatTopBar(
     onWatchScreen: () -> Unit,
     onPickModel: () -> Unit,
     onPickBranch: () -> Unit,
+    onOpenTerminal: () -> Unit,
 ) {
     val zc = LocalZcodeColors.current
     Row(
@@ -365,6 +381,14 @@ private fun ChatTopBar(
             Icon(
                 Icons.Rounded.Memory,
                 contentDescription = "选择模型",
+                tint = zc.text,
+            )
+        }
+        // 终端：48dp 图标钮（官方切换面板「终端」tab）
+        IconButton(onClick = onOpenTerminal) {
+            Icon(
+                Icons.Rounded.Terminal,
+                contentDescription = "终端",
                 tint = zc.text,
             )
         }
@@ -1001,6 +1025,94 @@ private fun BranchPickerSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
                             )
                         }
                     }
+                }
+            }
+            Spacer(Modifier.height(ZcodeSpacing.lg))
+        }
+    }
+}
+
+/**
+ * 终端弹层（官方切换面板「终端」tab 的移动端形态，第一阶段）：
+ * - 输出区：等宽 TextView 自动滚动（ANSI 转义剥离后纯文本）；
+ * - 命令行：底部输入，回车即发送（terminalWrite 带 \r）。
+ * 完整 xterm 渲染（颜色/光标控制）为后续迭代。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    var cmd by remember { mutableStateOf("") }
+    val listState = rememberLazyListState()
+    val output = viewModel.terminalOutput
+
+    // 进入时创建 PTY（LaunchedEffect 只跑一次）
+    LaunchedEffect(Unit) { viewModel.openTerminal() }
+    // 输出增长时贴底
+    LaunchedEffect(output.length) {
+        if (output.isNotEmpty()) listState.scrollToItem(Int.MAX_VALUE / 2, Int.MAX_VALUE)
+    }
+
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = ZcodeSpacing.screenPadding)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("终端", style = ZcodeType.uiLg, color = zc.text)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (viewModel.terminalReady) "已连接电脑端 shell" else "连接中…",
+                    style = ZcodeType.uiXs,
+                    color = if (viewModel.terminalReady) zc.running else zc.textTertiary,
+                )
+            }
+            Spacer(Modifier.height(ZcodeSpacing.sm))
+            // 输出区：黑色终端底（终端惯例）+ 等宽浅字
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 240.dp, max = 420.dp)
+                    .clip(ZcodeShape.inner)
+                    .background(Color(0xFF16181D))
+                    .padding(ZcodeSpacing.sm),
+            ) {
+                if (output.isEmpty()) {
+                    Text(
+                        if (viewModel.terminalReady) "（终端就绪，下方输入命令）" else "正在电脑端启动 shell…",
+                        style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
+                        color = Color(0xFF9AA0AA),
+                    )
+                } else {
+                    SelectionContainer {
+                        Text(
+                            output,
+                            style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
+                            color = Color(0xFFD7DAE0),
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(ZcodeSpacing.sm))
+            // 命令行
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = cmd,
+                    onValueChange = { cmd = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("输入命令…", style = ZcodeType.uiSm, color = zc.textTertiary) },
+                    textStyle = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
+                    shape = ZcodeShape.input,
+                )
+                Spacer(Modifier.width(ZcodeSpacing.sm))
+                IconButton(
+                    onClick = {
+                        if (cmd.isNotBlank()) {
+                            viewModel.sendTerminalCommand(cmd)
+                            cmd = ""
+                        }
+                    },
+                    enabled = cmd.isNotBlank() && viewModel.terminalReady,
+                ) {
+                    Icon(Icons.Rounded.ArrowUpward, "执行", tint = zc.text)
                 }
             }
             Spacer(Modifier.height(ZcodeSpacing.lg))

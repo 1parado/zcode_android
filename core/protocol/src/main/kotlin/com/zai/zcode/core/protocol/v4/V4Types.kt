@@ -57,6 +57,19 @@ object V4 {
     const val METHOD_GIT_LOCAL_BRANCHES = "getLocalBranches"
     const val METHOD_GIT_SWITCH_BRANCH = "switchBranch"
     const val METHOD_GIT_SUMMARY = "getWorkspaceRepositoryInfo"
+
+    /**
+     * 终端（channels.ts:95 Terminal: "terminal"）。
+     * 官方 ITerminalService：create/write/resize/dispose + onDynamicData/onDynamicExit
+     * （带 id 参数的动态事件——EventListen 的 arg 是 terminal id）。
+     */
+    const val CHANNEL_TERMINAL = "terminal"
+    const val METHOD_TERMINAL_CREATE = "create"
+    const val METHOD_TERMINAL_WRITE = "write"
+    const val METHOD_TERMINAL_RESIZE = "resize"
+    const val METHOD_TERMINAL_DISPOSE = "dispose"
+    const val EVENT_TERMINAL_DATA = "onDynamicData"
+    const val EVENT_TERMINAL_EXIT = "onDynamicExit"
     const val METHOD_LIST_TASKS = "listTasks"
     const val METHOD_LIST_PINNED_TASKS = "listPinnedTasks"
     const val METHOD_LIST_ARCHIVED_TASKS = "listArchivedTasks"

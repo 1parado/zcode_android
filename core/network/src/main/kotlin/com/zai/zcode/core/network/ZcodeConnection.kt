@@ -241,7 +241,29 @@ class ZcodeConnection(
                 // 对第一个 workspace 开 bridge（与 web 移动端流程一致：单工作区自动打开）
                 val ws0 = info.workspaces.firstOrNull()
                     ?: throw IllegalStateException("bootstrap 无可用工作区")
-                openBridge(ws0)
+                // 修复依据（真机「连接失败：未找到桌面窗口 host process，windowId=1」）：
+                // 桌面端 host 进程由 renderer dom-ready 触发 spawn（desktopWindow
+                // Lifecycle.ts:126），手机扫码时桌面若正在启动/升级重启，bridge-open
+                // 必然 DESKTOP_HOST_MISSING。这是暂时态——桌面起来后重试即可。
+                // 有界重试（5 次 × 4s = 20s 窗口）替代直接失败，与 recoverBridge 的
+                // reopen 路径同一语义。
+                var opened = false
+                var lastBridgeError: Exception? = null
+                repeat(5) { attempt ->
+                    try {
+                        openBridge(ws0)
+                        opened = true
+                    } catch (e: Exception) {
+                        lastBridgeError = e
+                        if (!wantConnected.get()) return@repeat
+                        ZLog.w(TAG, "bridge-open retry ${attempt + 1}/5: ${e.message}")
+                        delay(4_000)
+                    }
+                }
+                if (!opened) {
+                    lastBridgeError?.let { throw it }
+                    return@launch
+                }
 
                 _state.value = State.Ready(info)
                 _currentWorkspace.value = info.workspaces.firstOrNull()

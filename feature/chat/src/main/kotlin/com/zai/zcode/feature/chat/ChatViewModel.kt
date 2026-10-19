@@ -206,6 +206,62 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch { repository.switchBranch(name) }
     }
 
+    // ── 终端（官方 ITerminalService：create → 挂监听 → write/resize → dispose）──
+
+    var terminalOutput by mutableStateOf("")
+        private set
+    var terminalReady by mutableStateOf(false)
+        private set
+    private var terminalId: String? = null
+
+    /** 进入终端页时创建 PTY 并挂输出监听（幂等：已有连接直接复用）。 */
+    fun openTerminal() {
+        if (terminalReady) return
+        viewModelScope.launch {
+            try {
+                val id = connection.protocol.value?.terminalCreate(
+                    cols = 80, rows = 24, cwd = workspacePath,
+                ) ?: return@launch
+                terminalId = id
+                // 先挂监听再标记 ready，避免早期输出丢失
+                connection.protocol.value?.onTerminalData = { _, data ->
+                    // ANSI 转义序列剥离（第一阶段 TextView 渲染不支持转义）：
+                    // CSI 序列 ESC[...letter 与 OSC 序列 ESC]...BEL/ST，另剥离 CR
+                    terminalOutput += data
+                        .replace(Regex("\u001B\\[[0-9;?]*[a-zA-Z]"), "")
+                        .replace(Regex("\u001B\\][^\u0007\u001B]*(\u0007|\u001B\\\\)"), "")
+                        .replace("\r", "")
+                }
+                connection.protocol.value?.onTerminalExit = { _, _ ->
+                    terminalReady = false
+                }
+                connection.protocol.value?.attachTerminalListeners(id)
+                terminalReady = true
+            } catch (e: Exception) {
+                android.util.Log.w("ChatViewModel", "terminal create failed: ${e.message}")
+            }
+        }
+    }
+
+    /** 向终端发送一行命令（自动补 CR 回车执行）。 */
+    fun sendTerminalCommand(cmd: String) {
+        val id = terminalId ?: return
+        viewModelScope.launch {
+            runCatching { connection.protocol.value?.terminalWrite(id, "$cmd\r") }
+        }
+    }
+
+    /** 离开终端页：释放 PTY 与监听。 */
+    fun closeTerminal() {
+        val id = terminalId ?: return
+        terminalReady = false
+        terminalOutput = ""
+        viewModelScope.launch {
+            runCatching { connection.protocol.value?.terminalDispose(id) }
+        }
+        terminalId = null
+    }
+
     /**
      * 会话加载态：区分「在等」/「电脑端 runtime 没起来」/「读不出来」。
      * 与 [ui] 分离是因为「零行」有两种截然不同的含义：会话真的还没有内容，

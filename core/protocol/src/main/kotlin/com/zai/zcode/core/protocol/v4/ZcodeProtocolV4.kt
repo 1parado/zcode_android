@@ -114,8 +114,10 @@ class ZcodeProtocolV4(
                 // (channelServer.ts 只发 [204, id]),event 为 null 是常态。此处按
                 // channelName 过滤即可;帧 kind 由 dispatchLogicalFrame 按 topic 分发,
                 // 两条监听(dispose 后重挂)都汇入同一入口。
-                if (event.channelName == V4.CHANNEL_ZCODE_AGENT) {
-                    handleWireNotification(event.payload)
+                when (event.channelName) {
+                    V4.CHANNEL_ZCODE_AGENT -> handleWireNotification(event.payload)
+                    // 终端事件（onDynamicData/onDynamicExit，EventListen arg=terminal id）
+                    V4.CHANNEL_TERMINAL -> dispatchTerminalEvent(event.payload)
                 }
             }
         }
@@ -337,6 +339,107 @@ class ZcodeProtocolV4(
             timeoutMs,
         )
         return result != null
+    }
+
+    // ── 终端（官方 ITerminalService：PTY 双向流，移动端只读查看 + 命令写入）──
+
+    /** 终端输出回调（id → data）。由 dispatchTerminalEvent 按 id 分发。 */
+    var onTerminalData: ((id: String, data: String) -> Unit)? = null
+    /** 终端退出回调。 */
+    var onTerminalExit: ((id: String, exitCode: Int) -> Unit)? = null
+
+    private var terminalDataListenerId: Int? = null
+    private var terminalExitListenerId: Int? = null
+
+    /** 挂终端输出/退出事件监听（EventListen arg = terminal id，进入会话终端页时调用）。 */
+    fun attachTerminalListeners(terminalId: String) {
+        detachTerminalListeners()
+        terminalDataListenerId = channel.listenEvent(
+            V4.CHANNEL_TERMINAL, V4.EVENT_TERMINAL_DATA, terminalId,
+        )
+        terminalExitListenerId = channel.listenEvent(
+            V4.CHANNEL_TERMINAL, V4.EVENT_TERMINAL_EXIT, terminalId,
+        )
+        boundTerminalId = terminalId
+    }
+
+    private var boundTerminalId: String? = null
+
+    fun detachTerminalListeners() {
+        terminalDataListenerId?.let { channel.disposeEvent(it) }
+        terminalExitListenerId?.let { channel.disposeEvent(it) }
+        terminalDataListenerId = null
+        terminalExitListenerId = null
+        boundTerminalId = null
+    }
+
+    /**
+     * 创建终端（terminal.create {cols, rows, cwd?}）。
+     * cwd 传 workspacePath——终端在电脑端工作区里起 shell。
+     */
+    suspend fun terminalCreate(
+        cols: Int = 80,
+        rows: Int = 24,
+        cwd: String? = null,
+        timeoutMs: Long = 20_000,
+    ): String? {
+        val params = buildJsonObject {
+            put("cols", cols)
+            put("rows", rows)
+            if (!cwd.isNullOrBlank()) put("cwd", cwd)
+        }
+        val result = channel.request(V4.CHANNEL_TERMINAL, V4.METHOD_TERMINAL_CREATE, params, timeoutMs)
+        val obj = result as? JsonObject ?: return null
+        return obj["id"].asStringOrNull()
+    }
+
+    /** 向终端写入（命令 + 
+ 回车）。 */
+    suspend fun terminalWrite(id: String, data: String) {
+        val params = buildJsonObject {
+            put("id", id)
+            put("data", data)
+        }
+        channel.request(V4.CHANNEL_TERMINAL, V4.METHOD_TERMINAL_WRITE, params, timeoutMs = 10_000)
+    }
+
+    /** 调整终端尺寸（移动端软键盘/分屏时）。 */
+    suspend fun terminalResize(id: String, cols: Int, rows: Int) {
+        val params = buildJsonObject {
+            put("id", id)
+            put("cols", cols)
+            put("rows", rows)
+        }
+        channel.request(V4.CHANNEL_TERMINAL, V4.METHOD_TERMINAL_RESIZE, params, timeoutMs = 10_000)
+    }
+
+    /** 释放终端（离开终端页时）。 */
+    suspend fun terminalDispose(id: String) {
+        detachTerminalListeners()
+        runCatching {
+            channel.request(
+                V4.CHANNEL_TERMINAL,
+                V4.METHOD_TERMINAL_DISPOSE,
+                buildJsonObject { put("id", id) },
+                timeoutMs = 10_000,
+            )
+        }
+    }
+
+    /**
+     * 终端事件分发：EVENT_FIRE body 是 {id, data}/{id, exitCode}——由
+     * handleWireNotification 之前的通用事件路径按事件 id 路由。此方法由
+     * ChannelClient 事件流（terminal 监听 id 命中）调用。
+     */
+    fun dispatchTerminalEvent(payload: Any?) {
+        val obj = payload as? JsonObject ?: return
+        val id = obj["id"].asStringOrNull() ?: return
+        obj["data"].asStringOrNull()?.let { data ->
+            if (id == boundTerminalId) onTerminalData?.invoke(id, data)
+        }
+        obj["exitCode"].asLongOrNull()?.let { code ->
+            if (id == boundTerminalId) onTerminalExit?.invoke(id, code.toInt())
+        }
     }
 
     // ── Git 分支选择（官方 useGitBranchSwitcher / gitCliRepo）──
