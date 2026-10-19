@@ -1075,11 +1075,21 @@ private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
                     .padding(ZcodeSpacing.sm),
             ) {
                 if (output.isEmpty()) {
-                    Text(
-                        if (viewModel.terminalReady) "（终端就绪，下方输入命令）" else "正在电脑端启动 shell…",
-                        style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
-                        color = Color(0xFF9AA0AA),
-                    )
+                    // 三态：错误（红字，可操作）/ 连接中 / 就绪
+                    if (viewModel.terminalError != null) {
+                        Text(
+                            "终端创建失败：" + (viewModel.terminalError ?: "") +
+                                "\n请确认电脑端 ZCode 已打开且版本支持终端，关闭本面板重试。",
+                            style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
+                            color = Color(0xFFE06C75),
+                        )
+                    } else {
+                        Text(
+                            if (viewModel.terminalReady) "（终端就绪，下方输入命令）" else "正在电脑端启动 shell…",
+                            style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
+                            color = Color(0xFF9AA0AA),
+                        )
+                    }
                 } else {
                     SelectionContainer {
                         Text(

@@ -270,7 +270,21 @@ class ChannelClient(
             add(JsonPrimitive(channelName))
             add(JsonPrimitive(eventName))
         }
-        val body = RpcSerialization.serializeTwoSegments(header, arg as? JsonElement)
+        // 修复依据（真机：桌面端日志 terminal.onDynamicData FAIL "Terminal not found:
+        // undefined" → uncaughtException 击杀整个 host 进程）：terminal 动态事件的
+        // arg 是纯字符串（terminal id），旧实现 `arg as? JsonElement` 对 String cast
+        // 得 null → body 空 → 服务端收到 undefined。String/数字 arg 包装成
+        // JsonPrimitive，JsonElement 原样，null 才发空 body。
+        val bodyArg: JsonElement? = when (arg) {
+            null -> null
+            is JsonElement -> arg
+            is String -> JsonPrimitive(arg)
+            is Int -> JsonPrimitive(arg)
+            is Long -> JsonPrimitive(arg)
+            is Boolean -> JsonPrimitive(arg)
+            else -> JsonPrimitive(arg.toString())
+        }
+        val body = RpcSerialization.serializeTwoSegments(header, bodyArg)
         val frame = encodeRpcMessage(
             RpcProtocol.MSG_REGULAR,
             id,
@@ -279,7 +293,7 @@ class ChannelClient(
         )
         // 诊断：EventListen 是 fire-and-forget，没有任何 ACK——若 frame 因 onSend 未接线
         // 或 channel 未 IDLE 而发不出去，服务端永远不知道要 fan-out，表现为 ACK 能到、零帧。
-        ZLog.i(TAG, "listenEvent id=$id channel=$channelName event=$eventName")
+        ZLog.i(TAG, "listenEvent id=$id channel=$channelName event=$eventName arg=$bodyArg")
         onSend?.invoke(frame)
         return id
     }

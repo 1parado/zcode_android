@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -212,34 +213,42 @@ class ChatViewModel @Inject constructor(
         private set
     var terminalReady by mutableStateOf(false)
         private set
+    var terminalError by mutableStateOf<String?>(null)
+        private set
     private var terminalId: String? = null
 
-    /** 进入终端页时创建 PTY 并挂输出监听（幂等：已有连接直接复用）。 */
+    /** 进入终端页时创建 PTY 并挂输出监听（失败可见 + 一次重试）。 */
     fun openTerminal() {
         if (terminalReady) return
+        terminalError = null
         viewModelScope.launch {
-            try {
-                val id = connection.protocol.value?.terminalCreate(
-                    cols = 80, rows = 24, cwd = workspacePath,
-                ) ?: return@launch
-                terminalId = id
-                // 先挂监听再标记 ready，避免早期输出丢失
-                connection.protocol.value?.onTerminalData = { _, data ->
-                    // ANSI 转义序列剥离（第一阶段 TextView 渲染不支持转义）：
-                    // CSI 序列 ESC[...letter 与 OSC 序列 ESC]...BEL/ST，另剥离 CR
-                    terminalOutput += data
-                        .replace(Regex("\u001B\\[[0-9;?]*[a-zA-Z]"), "")
-                        .replace(Regex("\u001B\\][^\u0007\u001B]*(\u0007|\u001B\\\\)"), "")
-                        .replace("\r", "")
+            // 创建失败重试一次（relay 链路冷启动时 terminal 通道可能未就绪）
+            var lastError: Exception? = null
+            repeat(2) { attempt ->
+                try {
+                    val id = connection.protocol.value?.terminalCreate(
+                        cols = 80, rows = 24, cwd = workspacePath,
+                    ) ?: throw IllegalStateException("terminal create 返回空（桌面端通道未就绪或版本过旧）")
+                    terminalId = id
+                    connection.protocol.value?.onTerminalData = { _, data ->
+                        terminalOutput += data
+                            .replace(Regex("\u001B\\[[0-9;?]*[a-zA-Z]"), "")
+                            .replace(Regex("\u001B\\][^\u0007\u001B]*(\u0007|\u001B\\\\)"), "")
+                            .replace("\r", "")
+                    }
+                    connection.protocol.value?.onTerminalExit = { _, _ ->
+                        terminalReady = false
+                    }
+                    connection.protocol.value?.attachTerminalListeners(id)
+                    terminalReady = true
+                    return@launch
+                } catch (e: Exception) {
+                    lastError = e
+                    android.util.Log.w("ChatViewModel", "terminal create attempt ${attempt + 1} failed: ${e.message}")
+                    delay(2_000)
                 }
-                connection.protocol.value?.onTerminalExit = { _, _ ->
-                    terminalReady = false
-                }
-                connection.protocol.value?.attachTerminalListeners(id)
-                terminalReady = true
-            } catch (e: Exception) {
-                android.util.Log.w("ChatViewModel", "terminal create failed: ${e.message}")
             }
+            terminalError = lastError?.message ?: "终端创建失败"
         }
     }
 
