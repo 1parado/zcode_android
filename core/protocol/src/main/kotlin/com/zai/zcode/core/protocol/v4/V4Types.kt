@@ -51,6 +51,12 @@ object V4 {
     /** OAuth 账号会话（channels.ts:122 OAuth: "oauth"）。 */
     const val CHANNEL_OAUTH = "oauth"
     const val METHOD_OAUTH_CACHED_SESSION = "restoreCachedSession"
+
+    /** Git 服务（channels.ts:97 Git: "git"）。分支选择器用（官方 useGitBranchSwitcher）。 */
+    const val CHANNEL_GIT = "git"
+    const val METHOD_GIT_LOCAL_BRANCHES = "getLocalBranches"
+    const val METHOD_GIT_SWITCH_BRANCH = "switchBranch"
+    const val METHOD_GIT_SUMMARY = "getWorkspaceRepositoryInfo"
     const val METHOD_LIST_TASKS = "listTasks"
     const val METHOD_LIST_PINNED_TASKS = "listPinnedTasks"
     const val METHOD_LIST_ARCHIVED_TASKS = "listArchivedTasks"

@@ -339,6 +339,65 @@ class ZcodeProtocolV4(
         return result != null
     }
 
+    // ── Git 分支选择（官方 useGitBranchSwitcher / gitCliRepo）──
+
+    /**
+     * 列本地分支（git 通道 getLocalBranches，参数 {workspacePath}——gitCliRepo
+     * 按工作区解析 repo root，git for-each-ref refs/heads）。
+     * 非 git 仓库时 branches 为空、isRepository=false。
+     */
+    suspend fun gitLocalBranches(
+        workspacePath: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = 15_000,
+    ): GitBranchList? {
+        val params = buildJsonObject {
+            put("workspacePath", workspacePath)
+            if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+        }
+        val result = channel.request(V4.CHANNEL_GIT, V4.METHOD_GIT_LOCAL_BRANCHES, params, timeoutMs)
+        val obj = result as? JsonObject ?: return null
+        val branches = (obj["branches"] as? JsonArray)?.mapNotNull { el ->
+            (el as? JsonObject)?.let { b ->
+                GitBranch(
+                    name = b["name"].asStringOrNull() ?: return@mapNotNull null,
+                    isCurrent = b["isCurrent"] == kotlinx.serialization.json.JsonPrimitive(true),
+                )
+            }
+        } ?: emptyList()
+        return GitBranchList(
+            currentBranch = obj["currentBranchName"].asStringOrNull(),
+            isRepository = branches.isNotEmpty() || obj["currentBranchName"] != null,
+            branches = branches,
+        )
+    }
+
+    /** 切换分支（git 通道 switchBranch {workspacePath, targetBranchName}）。 */
+    suspend fun gitSwitchBranch(
+        workspacePath: String,
+        targetBranchName: String,
+        workspaceIdentity: String? = null,
+        timeoutMs: Long = 30_000,
+    ): Boolean {
+        val params = buildJsonObject {
+            put("workspacePath", workspacePath)
+            if (!workspaceIdentity.isNullOrBlank()) put("workspaceIdentity", workspaceIdentity)
+            put("targetBranchName", targetBranchName)
+        }
+        return runCatching {
+            channel.request(V4.CHANNEL_GIT, V4.METHOD_GIT_SWITCH_BRANCH, params, timeoutMs)
+            true
+        }.getOrDefault(false)
+    }
+
+    class GitBranchList(
+        val currentBranch: String?,
+        val isRepository: Boolean,
+        val branches: List<GitBranch>,
+    )
+
+    class GitBranch(val name: String, val isCurrent: Boolean)
+
     private suspend fun requestTaskList(
         method: String,
         workspacePath: String,

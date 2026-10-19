@@ -822,6 +822,35 @@ class ChatRepository(
         }
     }
 
+    // ── Git 分支（官方 useGitBranchSwitcher：workspace 级，一次拉取缓存）──
+
+    private val _gitBranches = MutableStateFlow<ZcodeProtocolV4.GitBranchList?>(null)
+    val gitBranches: StateFlow<ZcodeProtocolV4.GitBranchList?> = _gitBranches.asStateFlow()
+
+    /** 拉取本地分支（进入会话时调用一次；非 git 仓库时 isRepository=false）。 */
+    suspend fun loadGitBranches() {
+        val p = connection.protocol.value ?: return
+        _gitBranches.value = runCatching {
+            p.gitLocalBranches(workspacePath, workspaceIdentity)
+        }.getOrElse {
+            ZLog.w(TAG, "git branches failed: ${it.message}")
+            null
+        }
+    }
+
+    /** 切换分支（成功后重拉刷新当前分支名）。 */
+    suspend fun switchBranch(name: String): Boolean {
+        val p = connection.protocol.value ?: return false
+        val ok = runCatching {
+            p.gitSwitchBranch(workspacePath, name, workspaceIdentity)
+        }.getOrElse {
+            ZLog.w(TAG, "switchBranch failed: ${it.message}")
+            false
+        }
+        if (ok) loadGitBranches()
+        return ok
+    }
+
     /** 一个可选模型项（选择器列表行）。 */
     data class ModelOption(
         val providerId: String,

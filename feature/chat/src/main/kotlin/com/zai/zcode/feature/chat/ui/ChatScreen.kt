@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AccountTree
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.ExpandMore
@@ -91,6 +92,8 @@ fun ChatScreen(
     val zc = LocalZcodeColors.current
     // 模型选择弹层（官方 mobile composer 的模型选择入口语义）
     var showModelPicker by remember { mutableStateOf(false) }
+    // Git 分支切换弹层
+    var showBranchPicker by remember { mutableStateOf(false) }
 
     // 是否已停在底部：决定「跟随新内容」还是「累计未读」。
     // derivedStateOf 让它只在跨越阈值时变，滚动过程中不触发额外重组。
@@ -134,14 +137,23 @@ fun ChatScreen(
 
     Box(Modifier.fillMaxSize().imePadding()) {
         Column(Modifier.fillMaxSize()) {
+            val gitBranches by viewModel.gitBranches.collectAsState()
             ChatTopBar(
                 title = title,
                 connState = connState,
                 isRunning = ui.isRunning,
+                gitBranches = gitBranches,
                 onBack = onBack,
                 onWatchScreen = onWatchScreen,
                 onPickModel = { showModelPicker = true },
+                onPickBranch = { showBranchPicker = true },
             )
+            if (showBranchPicker) {
+                BranchPickerSheet(
+                    viewModel = viewModel,
+                    onDismiss = { showBranchPicker = false },
+                )
+            }
             if (showModelPicker) {
                 ModelPickerSheet(
                     viewModel = viewModel,
@@ -271,9 +283,11 @@ private fun ChatTopBar(
     title: String?,
     connState: ZcodeConnection.State,
     isRunning: Boolean,
+    gitBranches: com.zai.zcode.core.protocol.v4.ZcodeProtocolV4.GitBranchList?,
     onBack: () -> Unit,
     onWatchScreen: () -> Unit,
     onPickModel: () -> Unit,
+    onPickBranch: () -> Unit,
 ) {
     val zc = LocalZcodeColors.current
     Row(
@@ -304,6 +318,32 @@ private fun ChatTopBar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // Git 分支行（官方 desktop 顶栏同位：当前分支名，点击弹切换菜单；
+            // 非 git 仓库 isRepository=false 不显示）
+            if (gitBranches?.isRepository == true && gitBranches.currentBranch != null) {
+                Row(
+                    Modifier
+                        .clip(ZcodeShape.control)
+                        .clickable(onClick = onPickBranch)
+                        .padding(vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Rounded.AccountTree,
+                        contentDescription = null,
+                        modifier = Modifier.size(11.dp),
+                        tint = zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        gitBranches.currentBranch!!,
+                        style = ZcodeType.uiXs,
+                        color = zc.textTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
             if (connState !is ZcodeConnection.State.Ready) {
                 Text(
                     stateLabel(connState),
@@ -903,6 +943,67 @@ private fun QueueCard(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Git 分支切换弹层（官方 useGitBranchSwitcher 的移动端形态）：
+ * 当前分支打勾，点选其他分支即切换（switchBranch 成功后重拉刷新）。
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun BranchPickerSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
+    val zc = LocalZcodeColors.current
+    val git = viewModel.gitBranches.collectAsState().value
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = ZcodeSpacing.screenPadding)) {
+            Text("切换分支", style = ZcodeType.uiLg, color = zc.text)
+            Spacer(Modifier.height(ZcodeSpacing.xs))
+            Text(
+                "切换分支会改变电脑端工作区检出的代码",
+                style = ZcodeType.uiXs,
+                color = zc.textTertiary,
+            )
+            Spacer(Modifier.height(ZcodeSpacing.sm))
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                items(git?.branches?.size ?: 0) { index ->
+                    val branch = git?.branches?.get(index) ?: return@items
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(ZcodeShape.control)
+                            .then(if (branch.isCurrent) Modifier.background(zc.panel) else Modifier)
+                            .clickable {
+                                if (!branch.isCurrent) viewModel.switchBranch(branch.name)
+                                onDismiss()
+                            }
+                            .padding(horizontal = ZcodeSpacing.md, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            branch.name,
+                            style = ZcodeType.uiMd,
+                            color = zc.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (branch.isCurrent) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                contentDescription = "当前分支",
+                                modifier = Modifier.size(18.dp),
+                                tint = zc.running,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(ZcodeSpacing.lg))
         }
     }
 }

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zai.zcode.core.common.ClientIdProvider
 import com.zai.zcode.core.network.ZcodeConnection
+import com.zai.zcode.core.protocol.v4.ZcodeProtocolV4
 import com.zai.zcode.core.protocol.rpc.asObjectOrNull
 import com.zai.zcode.core.protocol.rpc.asStringOrNull
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -114,7 +115,14 @@ class ChatViewModel @Inject constructor(
     /** 一档协作模式（switchCollaborationMode 的 mode 值 + 中文标签）。 */
     data class ModeOption(val mode: String, val label: String, val description: String)
 
+    // ── Git 分支选择 ──
+
+    val gitBranches: StateFlow<ZcodeProtocolV4.GitBranchList?> =
+        repository.gitBranches.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     init {
+        // 分支列表与会话无状态依赖，进入会话拉一次（非 git 仓库 isRepository=false，UI 隐藏）
+        viewModelScope.launch { repository.loadGitBranches() }
         // 从会话快照 state 读当前模式/档位（config 投影），保证 UI 与电脑端一致
         viewModelScope.launch {
             ui.collect { snapshot ->
@@ -191,6 +199,11 @@ class ChatViewModel @Inject constructor(
 
     fun setAutoDrain(autoDrain: Boolean) {
         viewModelScope.launch { repository.setAutoDrain(autoDrain) }
+    }
+
+    /** 切换 git 分支（成功后 gitBranches 流自动刷新）。 */
+    fun switchBranch(name: String) {
+        viewModelScope.launch { repository.switchBranch(name) }
     }
 
     /**
