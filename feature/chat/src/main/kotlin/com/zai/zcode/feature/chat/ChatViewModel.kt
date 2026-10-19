@@ -255,6 +255,11 @@ class ChatViewModel @Inject constructor(
     /** 向终端发送一行命令（自动补 CR 回车执行）。 */
     fun sendTerminalCommand(cmd: String) {
         val id = terminalId ?: return
+        // 本地回显（用户报「打 clear 终端上只有 c」）：Windows PSReadLine 在窄宽度 +
+        // 无转义渲染下回显残缺（逐字符覆盖序列被 ANSI 剥离），用户看不到自己发了什么。
+        // 发送同时把命令追加进本地输出流——补「我输入了什么」的可见性；真实执行
+        // 结果仍来自 PTY 下行，不伪造终端事实。
+        terminalOutput += "❯ $cmd\n"
         viewModelScope.launch {
             runCatching { connection.protocol.value?.terminalWrite(id, "$cmd\r") }
         }
