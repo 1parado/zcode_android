@@ -261,6 +261,17 @@ class ZcodeConnection(
                     }
                 }
                 if (!opened) {
+                    // 修复依据（真机日志：桌面 host 进程 11:56 崩溃 exit code 1 后不再
+                    // respawn——desktopWindowLifecycle 只在 renderer dom-ready 触发
+                    // spawn，host 崩溃无自动重建）。持续 DESKTOP_HOST_MISSING 时抛出
+                    // 带明确引导的错误，连接页显示"请在电脑端重启 ZCode"而不是
+                    // 无方向的"将自动重试"。
+                    val msg = lastBridgeError?.message.orEmpty()
+                    if (msg.contains("未找到桌面窗口") || msg.contains("DESKTOP_HOST_MISSING")) {
+                        throw IllegalStateException(
+                            "电脑端的 ZCode 需要重启：请在电脑端关闭并重新打开 ZCode 应用后，再点连接",
+                        )
+                    }
                     lastBridgeError?.let { throw it }
                     return@launch
                 }
