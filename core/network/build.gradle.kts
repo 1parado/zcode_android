@@ -38,5 +38,7 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.androidx.datastore.preferences)
     testImplementation(libs.junit)
+    // 修复依据（BUG-010）：RpcFrameTransportTest 用 runTest 但此依赖此前缺失，
+    // CI 只跑 protocol/markdown 未暴露。补上 kotlinx-coroutines-test。
     testImplementation(libs.kotlinx.coroutines.test)
 }

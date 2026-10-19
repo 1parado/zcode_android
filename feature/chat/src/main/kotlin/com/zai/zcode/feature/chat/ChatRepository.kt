@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonObject
 // 修复依据（CI run 62）：buildJsonObject 内的 put(String, String) 来自 kotlinx.serialization
 // 的 JsonObjectBuilder.put 扩展，漏 import 时编译器把 String 当成 JsonElement 报错
@@ -87,6 +88,14 @@ enum class ChatLoadState {
     Error,
 }
 
+/** AttachmentRef（attachment-ref.ts:5-15；bytes 必填）。 */
+data class AttachmentRef(
+    val ref: String,
+    val fileName: String,
+    val mime: String,
+    val bytes: Long,
+)
+
 /**
  * 单会话对话数据源：ConversationReducer + conversation/<id> 订阅 + 发送命令。
  * 行投影直接以 protocol 的 RowView 语义渲染（UI 只认 kind/text/state）。
@@ -120,6 +129,7 @@ class ChatRepository(
             override val streaming: Boolean,
             val text: String,
             val inputOrigin: String?,
+            val attachments: List<com.zai.zcode.core.protocol.v4.AttachmentRefView> = emptyList(),
         ) : ChatRowKind
 
         data class AssistantText(
@@ -127,6 +137,12 @@ class ChatRepository(
             override val streaming: Boolean,
             val text: String,
             val model: String?,
+            /** 正文里内嵌的 zcode-artifact:// 图片（官方 markdown-artifact-images.ts）。 */
+            val imageRefs: List<String> = emptyList(),
+            /** 消息级交互的 entityId（assistantResponseId，缺省 rowId 字符串）。 */
+            val entityId: String? = null,
+            /** 服务端回读的反馈态（rows.ts:176 feedback: like/dislike）。 */
+            val feedback: String? = null,
         ) : ChatRowKind
 
         data class Reasoning(
@@ -141,6 +157,18 @@ class ChatRepository(
             val toolName: String,
             val inputText: String?,
             val status: String?,
+            // 专属渲染数据（官方 toolDisplay 同源投影）
+            val outputText: String? = null,
+            val displayKind: String? = null,
+            val bashOutput: String? = null,
+            val diffFilePath: String? = null,
+            val diffAdditions: Int? = null,
+            val diffDeletions: Int? = null,
+            val patch: List<com.zai.zcode.core.protocol.v4.PatchHunk> = emptyList(),
+            val progressLine: String? = null,
+            val outputPreview: String? = null,
+            val errorCode: String? = null,
+            val errorMessage: String? = null,
         ) : ChatRowKind
 
         /**
@@ -888,6 +916,29 @@ class ChatRepository(
         }
     }
 
+    /**
+     * 确保 CLI 里会话 resident（附件上传前置）。修复依据（用户报上传报
+     * The "path" argument must be of type string）：会话被容量去激活后，
+     * attachmentBegin 的冷恢复分支在服务端不带 workspace 上下文、用落盘
+     * session.path(undefined) 起 runtime 而失败；订阅链路的冷恢复带 workspace
+     * 能成功。这里重放一次订阅（幂等）触发同一条带 workspace 的恢复路径。
+     */
+    suspend fun ensureSessionResident(): Boolean {
+        val p = connection.protocol.value ?: return false
+        val subId = conversationSubscriptionId ?: return false
+        return runCatching {
+            val snap = reducer.snapshot(sessionId)
+            p.resyncConversation(
+                subscriptionId = subId,
+                workspacePath = workspacePath,
+                workspaceIdentity = workspaceIdentity,
+                baseLogEpoch = snap.logEpoch,
+                baseSeq = snap.seq,
+            )
+            true
+        }.getOrElse { false }
+    }
+
     /** 静默看门狗：运行态下长时间没帧则请求重放（zemote conversation.dart:1055）。 */
     private fun startWatchdog() {
         if (watchdogRunning) return
@@ -1113,6 +1164,89 @@ class ChatRepository(
         }
     }
 
+    // ── 消息级交互（官方 command.ts 的 CAS 命令：feedback/retry/fork）──
+
+    /**
+     * assistantText 点赞/点踩（type=setAssistantFeedback，command.ts:186-189）。
+     * 反馈状态服务端会经 row upsert 广播回来（assistantTextRow.feedback）。
+     */
+    suspend fun setAssistantFeedback(rowId: Long, entityId: String, feedback: String?): Boolean {
+        val p = connection.protocol.value ?: return false
+        return runCatching {
+            val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
+                commandId = java.util.UUID.randomUUID().toString(),
+                clientId = clientId,
+                sessionId = sessionId,
+                type = "setAssistantFeedback",
+                payload = buildJsonObject {
+                    put("target", buildJsonObject {
+                        put("rowId", rowId)
+                        put("entityId", entityId)
+                    })
+                    if (feedback != null) put("feedback", feedback) else put("feedback", JsonNull)
+                },
+            )
+            p.sendCommand(workspacePath, envelope, workspaceIdentity).status == "accepted"
+        }.getOrElse {
+            ZLog.w(TAG, "setAssistantFeedback failed: ${it.message}")
+            false
+        }
+    }
+
+    /** 重跑某条 assistant 消息（type=retryTurn，command.ts:183；服务端从 canonical input 重放）。 */
+    suspend fun retryTurn(rowId: Long, entityId: String): Boolean {
+        val p = connection.protocol.value ?: return false
+        return runCatching {
+            val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
+                commandId = java.util.UUID.randomUUID().toString(),
+                clientId = clientId,
+                sessionId = sessionId,
+                type = "retryTurn",
+                payload = buildJsonObject {
+                    put("target", buildJsonObject {
+                        put("rowId", rowId)
+                        put("entityId", entityId)
+                    })
+                },
+            )
+            p.sendCommand(workspacePath, envelope, workspaceIdentity).status == "accepted"
+        }.getOrElse {
+            ZLog.w(TAG, "retryTurn failed: ${it.message}")
+            false
+        }
+    }
+
+    /**
+     * 从某条完成态 assistant 消息 fork 新会话（type=forkAssistant，command.ts:166）。
+     * 成功后服务端返回 childSessionId（ack.result），UI 导航过去。
+     */
+    suspend fun forkAssistant(rowId: Long, entityId: String): String? {
+        val p = connection.protocol.value ?: return null
+        return runCatching {
+            val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
+                commandId = java.util.UUID.randomUUID().toString(),
+                clientId = clientId,
+                sessionId = sessionId,
+                type = "forkAssistant",
+                payload = buildJsonObject {
+                    put("target", buildJsonObject {
+                        put("rowId", rowId)
+                        put("entityId", entityId)
+                    })
+                },
+            )
+            val ack = p.sendCommand(workspacePath, envelope, workspaceIdentity, timeoutMs = 30_000)
+            if (ack.status != "accepted") {
+                ZLog.w(TAG, "forkAssistant rejected: ${ack.status}")
+                return@runCatching null
+            }
+            ack.raw["result"]?.asObjectOrNull()?.get("sessionId").asStringOrNull()
+        }.getOrElse {
+            ZLog.w(TAG, "forkAssistant failed: ${it.message}")
+            null
+        }
+    }
+
     /**
      * 行投影：服务端 RowView → 封闭的行模型。
      *
@@ -1131,10 +1265,32 @@ class ChatRepository(
             v.state?.let { it != "done" && it != "error" && it != "aborted" } == true
         val rowId = v.rowId ?: -1
         return when (v.kind) {
-            "userInput" -> ChatRowKind.UserInput(rowId, streaming, v.text.orEmpty(), v.inputOrigin)
-            "assistantText" -> ChatRowKind.AssistantText(rowId, streaming, v.text.orEmpty(), v.model)
+            "userInput" -> ChatRowKind.UserInput(
+                rowId, streaming, v.text.orEmpty(), v.inputOrigin, v.attachments,
+            )
+            "assistantText" -> ChatRowKind.AssistantText(
+                rowId, streaming, v.text.orEmpty(), v.model,
+                // AI 生成图片以 ![...](zcode-artifact://ref) 内嵌在 markdown 里
+                // （官方 markdown-artifact-images.ts ARTIFACT_IMAGE_PATTERN）
+                artifactImageRefs(v.text.orEmpty()),
+                entityId = v.assistantResponseId ?: rowId.toString(),
+                feedback = raw["feedback"].asStringOrNull(),
+            )
             "reasoning" -> ChatRowKind.Reasoning(rowId, streaming, v.text.orEmpty())
-            "toolCall" -> ChatRowKind.ToolCall(rowId, streaming, v.toolName ?: "tool", v.inputText, v.status)
+            "toolCall" -> ChatRowKind.ToolCall(
+                rowId, streaming, v.toolName ?: "tool", v.inputText, v.status,
+                outputText = v.outputText,
+                displayKind = v.outputDisplayKind,
+                bashOutput = v.bashOutput,
+                diffFilePath = v.diffFilePath,
+                diffAdditions = v.diffAdditions,
+                diffDeletions = v.diffDeletions,
+                patch = v.structuredPatch,
+                progressLine = v.progressPreviewLine,
+                outputPreview = v.outputPreviewText,
+                errorCode = v.errorCode,
+                errorMessage = v.errorMessage,
+            )
             "turnHeader" -> ChatRowKind.TurnHeader(rowId, v.state, v.activeMs, fileChangesOf(v))
             "subagent" -> ChatRowKind.Subagent(rowId, streaming, v.subagentType, v.summaryText, v.childSessionId)
             "artifact" -> ChatRowKind.Artifact(rowId, v.displayName, v.artifactType, v.sizeBytes)
@@ -1150,6 +1306,20 @@ class ChatRepository(
         val deletions = v.fileChangeDeletions ?: return null
         val files = v.fileChangeFiles ?: return null
         return ChatRowKind.TurnHeader.FileChanges(additions, deletions, files)
+    }
+
+    /**
+     * 提取正文内嵌的 zcode-artifact:// 图片引用（官方 markdown-artifact-images.ts
+     * ARTIFACT_IMAGE_PATTERN 的 Kotlin 版）。UI 在正文下方画廊显示，图片字节经
+     * [ZcodeProtocolV4.conversationAttachmentRead] 分块拉取。
+     */
+    private fun artifactImageRefs(text: String): List<String> {
+        val refs = mutableListOf<String>()
+        val regex = Regex("!\\[[^\\]\n]*\\]\\(\\s*(?:<)?(zcode-artifact://[^\\s)>]+)")
+        for (match in regex.findAll(text)) {
+            refs.add(match.groupValues[1].removeSuffix(">"))
+        }
+        return refs
     }
 
     /**
@@ -1171,8 +1341,17 @@ class ChatRepository(
         else -> v.markerObjective ?: v.markerDetail ?: v.markerOutcome ?: v.markerToModel ?: v.markerType
     }
 
-    /** 发送文本（sendText 命令）。 */
-    suspend fun sendText(text: String): Boolean {
+    /**
+     * 发送文本（sendText 命令）。
+     * @param attachments 已上传附件（attachmentUpload 返回的 ref，官方 sendText
+     * payload attachments 字段，command.ts:95）。AttachmentRef 是 .strict() schema
+     * 且 **bytes 必填**（attachment-ref.ts:10）——缺键会让整条命令被拒绝，表现为
+     * 「点了发送没反应」。
+     */
+    suspend fun sendText(
+        text: String,
+        attachments: List<AttachmentRef> = emptyList(),
+    ): Boolean {
         val p = connection.protocol.value ?: return false
         return runCatching {
             val envelope = com.zai.zcode.core.protocol.v4.buildCommandEnvelope(
@@ -1180,7 +1359,17 @@ class ChatRepository(
                 clientId = clientId,
                 sessionId = sessionId,
                 type = "sendText",
-                payload = com.zai.zcode.core.protocol.v4.buildSendTextPayload(text),
+                payload = com.zai.zcode.core.protocol.v4.buildSendTextPayload(
+                    text,
+                    attachments = attachments.map { a ->
+                        buildJsonObject {
+                            put("ref", a.ref)
+                            put("fileName", a.fileName)
+                            put("mime", a.mime)
+                            put("bytes", a.bytes)
+                        }
+                    },
+                ),
                 baseRevision = _ui.value.revision,
             )
             // 修复依据（AGENTS.md「Workspace Identity」）：远程链路必须显式带 identity，

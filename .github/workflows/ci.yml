@@ -20,8 +20,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Protocol + markdown unit tests
-        run: ./gradlew :core:protocol:test :core:markdown:test --console=plain --stacktrace
+      - name: Unit tests (protocol + markdown + network + sessions)
+        # 修复依据（BUG-010/011 回归教训）：只跑 protocol/markdown 让 network 测试
+        # 编译失败、sessions 用例失败双双漏网——测试模块必须全量进 CI。
+        run: ./gradlew :core:protocol:test :core:markdown:test :core:network:test :feature:sessions:test --console=plain --stacktrace
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --console=plain --stacktrace

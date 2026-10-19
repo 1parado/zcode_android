@@ -54,6 +54,8 @@ fun ZcodeComposer(
     onStop: (() -> Unit)? = null,
     maxLines: Int = 4,
     focusRequester: FocusRequester? = null,
+    /** 输入框左侧附加动作（如附件选择，官方 composer 的 + 按钮）。null 不占位。 */
+    leadingAction: (@Composable () -> Unit)? = null,
 ) {
     val zc = LocalZcodeColors.current
     Row(
@@ -62,6 +64,7 @@ fun ZcodeComposer(
             .padding(ZcodeSpacing.md),
         verticalAlignment = Alignment.Bottom,
     ) {
+        leadingAction?.invoke()
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,

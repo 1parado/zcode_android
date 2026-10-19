@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -16,20 +18,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.List
 import androidx.compose.material.icons.rounded.AccountTree
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DesktopWindows
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Policy
+import androidx.compose.material.icons.rounded.RateReview
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.foundation.rememberScrollState
@@ -40,9 +48,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -83,6 +93,7 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     onBack: () -> Unit,
     onWatchScreen: () -> Unit,
+    onOpenSession: (String) -> Unit = {},
     viewModel: ChatViewModel = hiltViewModel(),
 ) {
     val ui by viewModel.ui.collectAsState()
@@ -102,6 +113,11 @@ fun ChatScreen(
     var showBranchPicker by remember { mutableStateOf(false) }
     // 终端弹层（官方切换面板「终端」tab 的移动端形态）
     var showTerminal by remember { mutableStateOf(false) }
+    var showReview by remember { mutableStateOf(false) }
+    // 侧边栏（用户需求 2026-10-19：终端/审查不占顶栏，收进一个侧边栏图标，
+    // 点击后从右侧滑入面板，单独点开审查或终端——对齐官方 side pane 的
+    // mobileOverlay 抽屉模式）
+    var showSidePane by remember { mutableStateOf(false) }
 
     // 是否已停在底部：决定「跟随新内容」还是「累计未读」。
     // derivedStateOf 让它只在跨越阈值时变，滚动过程中不触发额外重组。
@@ -138,6 +154,12 @@ fun ChatScreen(
     LaunchedEffect(atTop) {
         if (atTop && hasMoreHistory) viewModel.loadOlder()
     }
+    // fork 成功 → 导航到子会话（官方 SessionPane 拿到 ack.sessionId 原地切换）
+    LaunchedEffect(Unit) {
+        ForkEventBus.events.collect { childId ->
+            if (childId.isNotBlank()) onOpenSession(childId)
+        }
+    }
 
     LaunchedEffect(atBottom) {
         if (atBottom) pendingCount = 0
@@ -155,7 +177,8 @@ fun ChatScreen(
                 onWatchScreen = onWatchScreen,
                 onPickModel = { showModelPicker = true },
                 onPickBranch = { showBranchPicker = true },
-                onOpenTerminal = { showTerminal = true },
+                // toggle 语义（用户反馈）：点图标开、再点一次（或点遮罩）关
+                onOpenSidePane = { showSidePane = !showSidePane },
             )
             if (showTerminal) {
                 TerminalSheet(
@@ -163,6 +186,27 @@ fun ChatScreen(
                     onDismiss = { viewModel.closeTerminal(); showTerminal = false },
                 )
             }
+            if (showReview) {
+                ReviewSheet(
+                    viewModel = viewModel,
+                    onDismiss = { showReview = false },
+                )
+            }
+            // 侧边栏：从右侧滑入（AnimatedVisibility 滑动 + 淡入，200ms 内克制动画）
+            SidePane(
+                viewModel = viewModel,
+                visible = showSidePane,
+                onDismiss = { showSidePane = false },
+                onOpenTerminal = {
+                    showSidePane = false
+                    showTerminal = true
+                },
+                onOpenReview = {
+                    showSidePane = false
+                    viewModel.refreshReview()
+                    showReview = true
+                },
+            )
             if (showBranchPicker) {
                 BranchPickerSheet(
                     viewModel = viewModel,
@@ -181,6 +225,8 @@ fun ChatScreen(
                 loadState = loadState,
                 hasMoreHistory = hasMoreHistory,
                 onRetry = viewModel::retrySubscribe,
+                imageContext = viewModel.sessionId to viewModel.connectionForUi,
+                viewModel = viewModel,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
             // 上下文用量条（usage.contextWindow）：>80% 变琥珀提醒，>95% 变红。
@@ -303,7 +349,7 @@ private fun ChatTopBar(
     onWatchScreen: () -> Unit,
     onPickModel: () -> Unit,
     onPickBranch: () -> Unit,
-    onOpenTerminal: () -> Unit,
+    onOpenSidePane: () -> Unit,
 ) {
     val zc = LocalZcodeColors.current
     Row(
@@ -384,11 +430,11 @@ private fun ChatTopBar(
                 tint = zc.text,
             )
         }
-        // 终端：48dp 图标钮（官方切换面板「终端」tab）
-        IconButton(onClick = onOpenTerminal) {
+        // 侧边栏：48dp 图标钮（用户需求：终端/审查收进侧边栏，点击从右侧滑出）
+        IconButton(onClick = onOpenSidePane) {
             Icon(
-                Icons.Rounded.Terminal,
-                contentDescription = "终端",
+                Icons.AutoMirrored.Rounded.List,
+                contentDescription = "侧边面板（审查/终端）",
                 tint = zc.text,
             )
         }
@@ -400,6 +446,86 @@ private fun ChatTopBar(
                 tint = zc.text,
             )
         }
+    }
+}
+
+/**
+ * 侧边栏（用户需求 2026-10-19）：点击顶栏图标后从右侧滑入的面板，列出
+ * 「审查」「终端」两个入口（对齐官方 side pane 的 mobileOverlay 抽屉模式：
+ * 手机上不占屏内空间，抽屉滑入滑出）。选中后关闭抽屉并打开对应内容。
+ */
+@Composable
+private fun SidePane(
+    viewModel: com.zai.zcode.feature.chat.ChatViewModel,
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onOpenTerminal: () -> Unit,
+    onOpenReview: () -> Unit,
+) {
+    val zc = LocalZcodeColors.current
+    androidx.compose.animation.AnimatedVisibility(
+        visible = visible,
+        enter = androidx.compose.animation.slideInHorizontally(
+            animationSpec = androidx.compose.animation.core.tween(200),
+        ) { it } + androidx.compose.animation.fadeIn(),
+        exit = androidx.compose.animation.slideOutHorizontally(
+            animationSpec = androidx.compose.animation.core.tween(180),
+        ) { it } + androidx.compose.animation.fadeOut(),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        // 全屏遮罩：点空白处关闭（抽屉语义）
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.35f))
+                .clickable(onClick = onDismiss),
+        ) {
+            Column(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxWidth(0.62f)
+                    .fillMaxHeight()
+                    .background(zc.base)
+                    .clickable(enabled = false) { } // 阻止穿透关闭
+                    .padding(ZcodeSpacing.lg),
+                verticalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+            ) {
+                Text("打开标签页", style = ZcodeType.uiLg, color = zc.text)
+                Text("选择要在面板中打开的标签。", style = ZcodeType.uiXs, color = zc.textTertiary)
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                SidePaneItem(
+                    icon = { Icon(Icons.Rounded.RateReview, null, Modifier.size(20.dp), tint = zc.text) },
+                    label = "审查",
+                ) { onOpenReview() }
+                SidePaneItem(
+                    icon = { Icon(Icons.Rounded.Terminal, null, Modifier.size(20.dp), tint = zc.text) },
+                    label = "终端",
+                ) { onOpenTerminal() }
+            }
+        }
+    }
+}
+
+/** 侧边栏条目：圆角卡 + 图标 + 文案（官方「打开标签页」选择器的移动端形态）。 */
+@Composable
+private fun SidePaneItem(
+    icon: @Composable () -> Unit,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val zc = LocalZcodeColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(ZcodeShape.input)
+            .background(zc.card)
+            .clickable(onClick = onClick)
+            .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon()
+        Spacer(Modifier.width(ZcodeSpacing.md))
+        Text(label, style = ZcodeType.uiMd, color = zc.text)
     }
 }
 
@@ -486,6 +612,8 @@ private fun ChatRowList(
     loadState: ChatLoadState,
     hasMoreHistory: Boolean,
     onRetry: () -> Unit,
+    imageContext: Pair<String, ZcodeConnection>,
+    viewModel: ChatViewModel,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -513,7 +641,11 @@ private fun ChatRowList(
             // 回收池里「工具卡」和「整段 Markdown」互相错配，滚出屏再滚回来每一行都要
             // 重新测量与重建 Composition —— 快速滑动时的掉帧主要来自这里。
             contentType = { row -> contentTypeOf(row) },
-        ) { row -> ChatRowView(row) }
+        ) { row ->
+            CompositionLocalProvider(LocalChatImageContext provides imageContext) {
+                ChatRowView(row, viewModel)
+            }
+        }
         // 空列表不再一律「加载会话…」——零行有两种完全不同的含义。
         if (rows.isEmpty()) {
             item(key = "empty_state", contentType = "emptyState") {
@@ -623,13 +755,225 @@ private fun JumpToLatestButton(count: Int, onClick: () -> Unit, modifier: Modifi
  */
 @Composable
 private fun ChatComposer(viewModel: ChatViewModel, isRunning: Boolean) {
-    ZcodeComposer(
-        value = viewModel.draft,
-        onValueChange = viewModel::onDraftChange,
-        onSend = viewModel::send,
-        // 运行中且用户还没打下一条 → 给停止；一旦开始打字，用户意图就变成"再说一句"
-        onStop = if (isRunning && viewModel.draft.isBlank()) viewModel::stop else null,
-        sendEnabled = viewModel.draft.isNotBlank() && !viewModel.sending,
+    val zc = LocalZcodeColors.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // 附件选择（官方 attachmentPut 上传链路的移动端入口）：系统文件选择器 → 上传
+    val pickFile = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        // 读字节 + 猜 mime，交 ViewModel 走 v4 上传事务。
+        // 文件名从 contentResolver 查（OpenableColumns.DISPLAY_NAME）——GetContent 的
+        // uri.lastPathSegment 常是纯数字内容 ID，不是真实文件名。
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        }.getOrNull() ?: return@rememberLauncherForActivityResult
+        val name = runCatching {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+            }
+        }.getOrNull() ?: uri.lastPathSegment ?: "attachment"
+        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        viewModel.uploadAttachment(name, mime, bytes) { }
+    }
+    // `/` 触发技能面板（官方 SlashCommandPlugin 语义：行首 / + 无空白 query）。
+    // 选中后把草稿替换为 "/name "，随消息提交由电脑端 CLI 展开执行。
+    val query = viewModel.draft
+    val showSlashPanel = query.startsWith("/") && !query.contains(' ') && query.length >= 1
+    LaunchedEffect(showSlashPanel) {
+        if (showSlashPanel) {
+            // 命令目录走 workspace-config 推送流（官方数据源，零冷启动）；
+            // 技能目录仍懒加载 getSkillReferenceCatalog（可能拉起 CLI，慢）
+            viewModel.subscribeWorkspaceConfig()
+            viewModel.loadCatalog()
+        }
+    }
+    Column(Modifier.fillMaxWidth()) {
+        // 待上传附件 chips（官方 composer 的附件缩略行）
+        viewModel.uploadError?.let {
+            Text(
+                it,
+                style = ZcodeType.uiXs,
+                color = zc.error,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { viewModel.dismissUploadError() }
+                    .padding(bottom = 4.dp),
+            )
+        }
+        if (viewModel.pendingAttachments.isNotEmpty() || viewModel.uploadingAttachment) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.xs),
+            ) {
+                viewModel.uploadingAttachment.takeIf { it }?.let {
+                    Box(
+                        Modifier
+                            .clip(ZcodeShape.input)
+                            .background(zc.card)
+                            .padding(horizontal = ZcodeSpacing.sm, vertical = 4.dp),
+                    ) {
+                        Text("上传中…", style = ZcodeType.uiXs, color = zc.textTertiary)
+                    }
+                }
+                viewModel.pendingAttachments.forEach { att ->
+                    Row(
+                        Modifier
+                            .clip(ZcodeShape.input)
+                            .background(zc.card)
+                            .clickable { viewModel.removeAttachment(att.ref) }
+                            .padding(horizontal = ZcodeSpacing.sm, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            att.fileName,
+                            style = ZcodeType.uiXs,
+                            color = zc.text,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 120.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("×", style = ZcodeType.uiXs, color = zc.textTertiary)
+                    }
+                }
+            }
+        }
+        Box {
+            ZcodeComposer(
+                value = viewModel.draft,
+                onValueChange = viewModel::onDraftChange,
+                onSend = viewModel::sendWithAttachments,
+                // 运行中且用户还没打下一条 → 给停止；一旦开始打字，用户意图就变成"再说一句"
+                onStop = if (isRunning && viewModel.draft.isBlank()) viewModel::stop else null,
+                sendEnabled = (viewModel.draft.isNotBlank() || viewModel.pendingAttachments.isNotEmpty()) && !viewModel.sending,
+                leadingAction = { AttachButton(onClick = { pickFile.launch("*/*") }) },
+            )
+            if (showSlashPanel) {
+                // 面板悬浮在输入框上方（Box 内 BottomCenter 对齐，官方 MentionPanel
+                // 也是 portal 到输入区上方）
+                SlashSuggestionPanel(
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    query = query.substring(1),
+                    items = viewModel.catalogItems,
+                    loading = viewModel.catalogLoading,
+                    error = viewModel.catalogError,
+                    onPick = { item ->
+                        viewModel.onDraftChange("/${item.name} ")
+                    },
+                    onDismiss = { viewModel.onDraftChange("") },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * `/` 技能建议面板（官方 slashCommandPanelSections 的移动端形态）：
+ * skills/plugins 目录按 query 过滤，输入框上方浮动显示，点击插入。
+ */
+@Composable
+private fun SlashSuggestionPanel(
+    modifier: Modifier = Modifier,
+    query: String,
+    items: List<ChatViewModel.CatalogItem>,
+    loading: Boolean,
+    error: String?,
+    onPick: (ChatViewModel.CatalogItem) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val zc = LocalZcodeColors.current
+    // 官方 MentionPanel 不限量、面板整体可滚；这里留量级上限防极端目录撑爆
+    val filtered = remember(query, items) {
+        items.filter { it.name.contains(query, ignoreCase = true) }.take(40)
+    }
+    if (filtered.isEmpty() && !loading && error == null) return
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp)
+            .clip(ZcodeShape.card)
+            .background(zc.base)
+            // 修复依据（用户报「不能上下滑、无法取消」）：命令+技能目录可能 20+ 条，
+            // 固定高度内必须可滚动；高度上限 320dp 防遮满输入区。
+            .heightIn(max = 320.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = ZcodeSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        if (loading && filtered.isEmpty()) {
+            Text(
+                "加载技能目录…",
+                style = ZcodeType.uiXs,
+                color = zc.textTertiary,
+                modifier = Modifier.padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
+            )
+        }
+        // 失败/空目录可见（此前「闪一下没内容」失败与空目录不可区分）
+        error?.let {
+            Text(
+                it,
+                style = ZcodeType.uiXs,
+                color = zc.attention,
+                modifier = Modifier.padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
+            )
+        }
+        filtered.forEach { item ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onPick(item) }
+                    .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "/${item.label}",
+                        style = ZcodeType.uiSm,
+                        color = zc.text,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (item.description.isNotBlank()) {
+                        Text(
+                            item.description,
+                            style = ZcodeType.uiXs,
+                            color = zc.textTertiary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+        // 显式收起：点「收起」清空触发器（/ 前缀没了，面板自然消失）——用户报
+        // 「怎么取消这个卡片」时只能靠退格删除，手势不明。
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onDismiss)
+                .padding(horizontal = ZcodeSpacing.md, vertical = ZcodeSpacing.xs),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Text("收起", style = ZcodeType.uiXs, color = zc.running)
+        }
+    }
+}
+
+/** composer 附件入口（官方 composer 的 + 按钮：系统文件选择器 → v4 上传事务）。 */
+@Composable
+private fun AttachButton(onClick: () -> Unit) {
+    Icon(
+        Icons.Rounded.AttachFile,
+        contentDescription = "添加附件",
+        modifier = Modifier
+            .size(40.dp)
+            .padding(8.dp)
+            .clickable(onClick = onClick),
+        tint = LocalZcodeColors.current.textTertiary,
     )
 }
 
@@ -980,51 +1324,194 @@ private fun QueueCard(
 private fun BranchPickerSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
     val zc = LocalZcodeColors.current
     val git = viewModel.gitBranches.collectAsState().value
+    // 对齐官方 GitBranchSwitcher：搜索分支 + 创建并检出新分支 + Git 图谱入口
+    var query by remember { mutableStateOf("") }
+    var showCreate by remember { mutableStateOf(false) }
+    var createName by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    var createError by remember { mutableStateOf<String?>(null) }
+    var showGraph by remember { mutableStateOf(false) }
+    val graph by remember(viewModel.gitGraph.size) { derivedStateOf { viewModel.gitGraph } }
+
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = ZcodeSpacing.screenPadding)) {
-            Text("切换分支", style = ZcodeType.uiLg, color = zc.text)
-            Spacer(Modifier.height(ZcodeSpacing.xs))
-            Text(
-                "切换分支会改变电脑端工作区检出的代码",
-                style = ZcodeType.uiXs,
-                color = zc.textTertiary,
-            )
-            Spacer(Modifier.height(ZcodeSpacing.sm))
-            androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(git?.branches?.size ?: 0) { index ->
-                    val branch = git?.branches?.get(index) ?: return@items
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(ZcodeShape.control)
-                            .then(if (branch.isCurrent) Modifier.background(zc.panel) else Modifier)
-                            .clickable {
-                                if (!branch.isCurrent) viewModel.switchBranch(branch.name)
-                                onDismiss()
+            if (showGraph) {
+                // ── Git 图谱（官方 GitGraphDialog 的移动端简化：单列时间线）──
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { showGraph = false }) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = zc.text)
+                    }
+                    Text("Git 图谱", style = ZcodeType.uiLg, color = zc.text)
+                }
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 440.dp),
+                ) {
+                    items(graph.size) { index ->
+                        val commit = graph[index]
+                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(
+                                    Modifier
+                                        .size(10.dp)
+                                        .background(zc.running, CircleShape),
+                                )
+                                if (index < graph.size - 1) {
+                                    Box(
+                                        Modifier
+                                            .width(2.dp)
+                                            .height(28.dp)
+                                            .background(zc.input),
+                                    )
+                                }
                             }
-                            .padding(horizontal = ZcodeSpacing.md, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            branch.name,
-                            style = ZcodeType.uiMd,
-                            color = zc.text,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (branch.isCurrent) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = "当前分支",
-                                modifier = Modifier.size(18.dp),
-                                tint = zc.running,
+                            Spacer(Modifier.width(ZcodeSpacing.sm))
+                            Column {
+                                Text(
+                                    commit.subject,
+                                    style = ZcodeType.uiSm,
+                                    color = zc.text,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    commit.refs.filter { it.second == "branch" }
+                                        .joinToString(" ") { it.first }
+                                        .ifEmpty { commit.hash.take(7) } + " · ${commit.authorName}",
+                                    style = ZcodeType.uiXs,
+                                    color = zc.textTertiary,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                    if (viewModel.gitGraphLoading) {
+                        item {
+                            Row(Modifier.padding(ZcodeSpacing.md), verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = zc.textTertiary)
+                                Spacer(Modifier.width(ZcodeSpacing.sm))
+                                Text("加载中…", style = ZcodeType.uiXs, color = zc.textTertiary)
+                            }
+                        }
+                    }
+                }
+                LaunchedEffect(Unit) { viewModel.loadGitGraph(reset = true) }
+            } else {
+                Text("切换分支", style = ZcodeType.uiLg, color = zc.text)
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                // 搜索分支（官方分支选择器顶部搜索框）
+                androidx.compose.material3.OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("搜索分支", style = ZcodeType.uiSm, color = zc.textTertiary) },
+                    shape = ZcodeShape.input,
+                )
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    val branches = git?.branches.orEmpty()
+                        .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+                    items(branches.size) { index ->
+                        val branch = branches[index]
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(ZcodeShape.control)
+                                .then(if (branch.isCurrent) Modifier.background(zc.panel) else Modifier)
+                                .clickable {
+                                    if (!branch.isCurrent) viewModel.switchBranch(branch.name)
+                                    onDismiss()
+                                }
+                                .padding(horizontal = ZcodeSpacing.md, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                branch.name,
+                                style = ZcodeType.uiMd,
+                                color = zc.text,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (branch.isCurrent) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = "当前分支",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = zc.running,
+                                )
+                            }
+                        }
+                    }
+                    if (branches.isEmpty() && query.isNotBlank()) {
+                        item {
+                            Text(
+                                "没有匹配「$query」的分支",
+                                style = ZcodeType.uiSm,
+                                color = zc.textTertiary,
+                                modifier = Modifier.padding(vertical = ZcodeSpacing.md),
                             )
                         }
                     }
+                }
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+                // 创建并检出新分支（官方 footer 按钮）
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(ZcodeShape.control)
+                        .clickable { showCreate = !showCreate }
+                        .padding(horizontal = ZcodeSpacing.md, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Add, null, Modifier.size(18.dp), tint = zc.textSecondary)
+                    Spacer(Modifier.width(ZcodeSpacing.sm))
+                    Text("创建并检出新分支...", style = ZcodeType.uiSm, color = zc.textSecondary)
+                }
+                if (showCreate) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = createName,
+                            onValueChange = { createName = it; createError = null },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            placeholder = { Text("新分支名", style = ZcodeType.uiSm, color = zc.textTertiary) },
+                            shape = ZcodeShape.input,
+                        )
+                        Spacer(Modifier.width(ZcodeSpacing.sm))
+                        androidx.compose.material3.TextButton(
+                            enabled = createName.isNotBlank() && !creating,
+                            onClick = {
+                                creating = true
+                                viewModel.createBranch(createName) { ok ->
+                                    creating = false
+                                    if (ok) onDismiss() else createError = "创建失败（分支名非法或已存在）"
+                                }
+                            },
+                        ) {
+                            Text("创建", color = if (createName.isNotBlank()) zc.running else zc.textTertiary)
+                        }
+                    }
+                    createError?.let {
+                        Text(it, style = ZcodeType.uiXs, color = zc.error)
+                    }
+                }
+                Spacer(Modifier.height(ZcodeSpacing.xs))
+                // Git 图谱入口（官方分支选择器 footer 菜单）
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(ZcodeShape.control)
+                        .clickable { showGraph = true }
+                        .padding(horizontal = ZcodeSpacing.md, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.AccountTree, null, Modifier.size(18.dp), tint = zc.textSecondary)
+                    Spacer(Modifier.width(ZcodeSpacing.sm))
+                    Text("Git 图谱", style = ZcodeType.uiSm, color = zc.textSecondary)
                 }
             }
             Spacer(Modifier.height(ZcodeSpacing.lg))
@@ -1074,6 +1561,14 @@ private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
                     style = ZcodeType.uiXs,
                     color = if (viewModel.terminalReady) zc.running else zc.textTertiary,
                 )
+                // 关闭面板只隐藏（shell 保留、重开接着用——对齐官方 detach 不 dispose）；
+                // 这里提供显式销毁：真正结束电脑端 shell 进程。
+                androidx.compose.material3.TextButton(onClick = {
+                    viewModel.destroyTerminal()
+                    onDismiss()
+                }) {
+                    Text("销毁", style = ZcodeType.uiXs, color = zc.error)
+                }
             }
             Spacer(Modifier.height(ZcodeSpacing.sm))
             // 输出区：LazyColumn 可滚动（用户报「clear 后看不到内容/不能往下滑」——

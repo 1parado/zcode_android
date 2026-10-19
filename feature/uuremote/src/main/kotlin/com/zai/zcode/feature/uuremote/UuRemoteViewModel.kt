@@ -36,9 +36,18 @@ class UuRemoteViewModel @Inject constructor(
     private val _state = MutableStateFlow<UuRemoteUiState>(UuRemoteUiState.NotBound)
     val state: StateFlow<UuRemoteUiState> = _state.asStateFlow()
 
+    /**
+     * 「重新检测」点击反馈（用户报「点了没反应」）：之前结果仍是未安装时 StateFlow
+     * 同值不去重也发不出去，UI 零反馈。加一个自增事件流，每次点击都发——UI 收到后
+     * 可提示「未检测到 UU 远程」；状态真变了则正常走状态机。
+     */
+    private val _recheckEvents = MutableStateFlow(0)
+    val recheckEvents: StateFlow<Int> = _recheckEvents.asStateFlow()
+
     fun onScreenResumed(isInstalled: Boolean) {
         if (!isInstalled) {
             _state.value = UuRemoteUiState.NotInstalled
+            _recheckEvents.value++
             return
         }
         val device = store.get()

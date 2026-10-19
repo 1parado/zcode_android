@@ -15,7 +15,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.CallSplit
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.DesktopWindows
+import androidx.compose.material.icons.rounded.ThumbDown
+import androidx.compose.material.icons.rounded.ThumbDownOffAlt
+import androidx.compose.material.icons.rounded.ThumbUp
+import androidx.compose.material.icons.rounded.ThumbUpOffAlt
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Terminal
@@ -27,6 +36,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,11 +48,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextAlign
 import com.zai.zcode.core.design.LocalZcodeColors
+import com.zai.zcode.feature.chat.ChatViewModel
 import com.zai.zcode.core.design.ZcodeShape
 import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
@@ -69,8 +83,11 @@ import kotlinx.coroutines.delay
  * 消息"出现"而不是"跳现"。只对新增行播一次：动画状态按 rowId 记账，历史回填
  * 批量插入的行也各自淡入，但同一行不会重播。
  */
+/** 图片加载需要的连接上下文（ChatScreen 提供；图片画廊官方 markdown-image 同链路）。 */
+internal val LocalChatImageContext = compositionLocalOf<Pair<String, com.zai.zcode.core.network.ZcodeConnection>?> { null }
+
 @Composable
-internal fun ChatRowView(row: ChatRepository.ChatRowKind) {
+internal fun ChatRowView(row: ChatRepository.ChatRowKind, viewModel: ChatViewModel? = null) {
     // 入场动效：remember(rowId) 的初始 alpha/offset 是 0，首帧后 animateFloatAsState
     // 推到 1。历史行（回填）同样走这一路径，但只播一次不随重组重播。
     var appeared by remember(row.rowId) { mutableStateOf(false) }
@@ -92,7 +109,7 @@ internal fun ChatRowView(row: ChatRepository.ChatRowKind) {
     ) {
         when (row) {
             is ChatRepository.ChatRowKind.UserInput -> UserInputRow(row)
-            is ChatRepository.ChatRowKind.AssistantText -> AssistantTextRow(row)
+            is ChatRepository.ChatRowKind.AssistantText -> AssistantTextRow(row, viewModel)
             is ChatRepository.ChatRowKind.Reasoning -> ReasoningRow(row)
             is ChatRepository.ChatRowKind.ToolCall -> ToolCallRow(row)
             is ChatRepository.ChatRowKind.TurnHeader -> TurnHeaderRow(row)
@@ -137,6 +154,17 @@ private fun UserInputRow(row: ChatRepository.ChatRowKind.UserInput) {
             color = zc.text,
         )
     }
+    // 图片附件缩略图（官方 ConversationRowView attachmentKind=media 同语义）
+    val imageAttachments = row.attachments.filter { it.isImage }
+    val ctx = LocalChatImageContext.current
+    if (imageAttachments.isNotEmpty() && ctx != null) {
+        ChatImageGallery(
+            imageRefs = imageAttachments.map { it.ref },
+            sessionId = ctx.first,
+            connection = ctx.second,
+            modifier = Modifier.padding(top = ZcodeSpacing.xs),
+        )
+    }
     // 复制成功提示：短暂显示后消失，不弹 Toast（Toast 与气泡在同一屏幕区域叠加，
     // 视觉重心分散；行内小徽标足够）。
     LaunchedEffect(copied) {
@@ -156,7 +184,10 @@ private fun UserInputRow(row: ChatRepository.ChatRowKind.UserInput) {
 }
 
 @Composable
-private fun AssistantTextRow(row: ChatRepository.ChatRowKind.AssistantText) {
+private fun AssistantTextRow(
+    row: ChatRepository.ChatRowKind.AssistantText,
+    viewModel: ChatViewModel? = null,
+) {
     val zc = LocalZcodeColors.current
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
@@ -171,6 +202,51 @@ private fun AssistantTextRow(row: ChatRepository.ChatRowKind.AssistantText) {
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // 消息级操作（官方 ConversationRowView:2323-2396 同款反馈/重试/分支）
+                if (viewModel != null) {
+                    val entityId = row.entityId ?: row.rowId.toString()
+                    Icon(
+                        if (row.feedback == "like") Icons.Rounded.ThumbUp else Icons.Rounded.ThumbUpOffAlt,
+                        contentDescription = "点赞",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable { viewModel.toggleFeedback(row.rowId, entityId, row.feedback) },
+                        tint = if (row.feedback == "like") zc.running else zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Icon(
+                        if (row.feedback == "dislike") Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
+                        contentDescription = "点踩",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable { viewModel.toggleFeedbackDislike(row.rowId, entityId, row.feedback) },
+                        tint = if (row.feedback == "dislike") zc.error else zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Icon(
+                        Icons.Rounded.Refresh,
+                        contentDescription = "重跑此消息",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable { viewModel.retryMessage(row.rowId, entityId) },
+                        tint = zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Icon(
+                        Icons.Rounded.CallSplit,
+                        contentDescription = "从此消息分支新会话",
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clickable {
+                                viewModel.forkMessage(row.rowId, entityId) { childId ->
+                                    // fork 成功：事件由外层 ChatScreen 订阅导航（见 ChatScreen ForkEventBus）
+                                    ForkEventBus.emit(childId)
+                                }
+                            },
+                        tint = zc.textTertiary,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                }
                 Row(
                     Modifier
                         .clip(ZcodeShape.control)
@@ -201,12 +277,31 @@ private fun AssistantTextRow(row: ChatRepository.ChatRowKind.AssistantText) {
         if (row.streaming) {
             LiveDot(ZcodeStatus.Running, Modifier.padding(top = ZcodeSpacing.sm))
         }
+        // 正文内嵌图片画廊（官方 markdown-image：zcode-artifact:// 经 attachmentRead 拉字节）
+        val ctx = LocalChatImageContext.current
+        if (row.imageRefs.isNotEmpty() && ctx != null) {
+            ChatImageGallery(
+                imageRefs = row.imageRefs,
+                sessionId = ctx.first,
+                connection = ctx.second,
+                modifier = Modifier.padding(top = ZcodeSpacing.sm),
+            )
+        }
     }
     LaunchedEffect(copied) {
         if (copied) {
             delay(1_500)
             copied = false
         }
+    }
+}
+
+/** fork 事件总线：RowView 拿不到导航回调，经单例中转给 ChatScreen 导航。 */
+internal object ForkEventBus {
+    private val _events = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val events: kotlinx.coroutines.flow.SharedFlow<String> = _events
+    fun emit(childSessionId: String) {
+        _events.tryEmit(childSessionId)
     }
 }
 
@@ -278,42 +373,173 @@ private fun toolStatusOf(status: String?): ZcodeStatus = when (status) {
 private fun ToolCallRow(row: ChatRepository.ChatRowKind.ToolCall) {
     val zc = LocalZcodeColors.current
     val status = toolStatusOf(row.status)
+    var expanded by remember(row.rowId) { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
             .clip(ZcodeShape.inner)
             .background(zc.card)
+            // 点击卡体展开/收起输出（官方工具卡的展开语义）
+            .clickable { expanded = !expanded }
             .padding(horizontal = ZcodeSpacing.md, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // 按工具身份选图标（官方 60+ renderer 的移动端近似：高频 5 类）
+            val icon = when (row.displayKind ?: toolFamilyOf(row.toolName)) {
+                "bash_output", "bash", "execute" -> Icons.Rounded.Terminal
+                "file_diff", "edit", "write" -> Icons.Rounded.Edit
+                "read" -> Icons.Rounded.Description
+                "cua" -> Icons.Rounded.DesktopWindows
+                else -> Icons.Rounded.Build
+            }
             Icon(
-                Icons.Rounded.Build,
+                icon,
                 contentDescription = null,
                 modifier = Modifier.size(14.dp),
                 tint = zc.textSecondary,
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                row.toolName,
+                // 卡面标题：diff 显示文件名，bash 显示命令摘要，其余显示工具名
+                row.diffFilePath?.substringAfterLast('/')
+                    ?: row.inputText?.lineSequence()?.firstOrNull()?.take(48)
+                    ?: row.toolName,
                 style = ZcodeType.mono,
                 color = zc.textSecondary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
             )
+            // edit/write 显示 +N -N（官方 file_diff 卡同款）
+            if (row.diffAdditions != null || row.diffDeletions != null) {
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    buildString {
+                        row.diffAdditions?.takeIf { it > 0 }?.let { append("+${it} ") }
+                        row.diffDeletions?.takeIf { it > 0 }?.let { append("-${it}") }
+                    },
+                    style = ZcodeType.uiXs,
+                    color = if ((row.diffDeletions ?: 0) > (row.diffAdditions ?: 0)) {
+                        Color(0xFFD44747)
+                    } else {
+                        Color(0xFF2E9E5B)
+                    },
+                )
+            }
             Spacer(Modifier.width(6.dp))
             LiveDot(status)
         }
-        // 参数摘要：工具输入常常是整份文件内容，截断到两行，避免一行工具吃掉整屏
-        row.inputText?.takeIf { it.isNotBlank() }?.let {
+        // 运行中：Bash 有界预览一行（官方 outputPreview）
+        if (row.streaming && (row.outputPreview ?: row.progressLine) != null) {
             Text(
-                it,
+                (row.outputPreview ?: row.progressLine)?.lineSequence()?.lastOrNull().orEmpty(),
                 modifier = Modifier.padding(top = 4.dp),
                 style = ZcodeType.mono,
                 color = zc.textTertiary,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        // 失败：错误码 + 信息（官方 error 块）
+        if (row.status == "error") {
+            Text(
+                listOfNotNull(row.errorCode, row.errorMessage).joinToString("："),
+                modifier = Modifier.padding(top = 4.dp),
+                style = ZcodeType.uiXs,
+                color = zc.error,
+                maxLines = if (expanded) 8 else 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // 展开：bash 输出 / diff 补丁 / 终态全文（官方专属 renderer 的移动端近似）
+        if (expanded) {
+            val body = when {
+                row.patch.isNotEmpty() -> null // 走 diff 渲染
+                row.bashOutput?.isNotBlank() == true -> row.bashOutput
+                row.outputText?.isNotBlank() == true -> row.outputText
+                else -> null
+            }
+            if (row.patch.isNotEmpty()) {
+                DiffHunksView(row.patch, Modifier.padding(top = 6.dp))
+            } else if (body != null) {
+                Text(
+                    body,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF16181D))
+                        .padding(8.dp),
+                    style = ZcodeType.mono.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                    ),
+                    color = Color(0xFFC9CED6),
+                    maxLines = 20,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else if (row.outputText == null && row.bashOutput == null && row.patch.isEmpty()) {
+                Text(
+                    "无输出",
+                    modifier = Modifier.padding(top = 6.dp),
+                    style = ZcodeType.uiXs,
+                    color = zc.textTertiary,
+                )
+            }
+        } else {
+            // 参数摘要：工具输入常常是整份文件内容，截断到两行，避免一行工具吃掉整屏
+            row.inputText?.takeIf { it.isNotBlank() && row.diffFilePath == null }?.let {
+                Text(
+                    it,
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = ZcodeType.mono,
+                    color = zc.textTertiary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** 工具名 → 卡面家族（无 display kind 时的近似分派）。 */
+private fun toolFamilyOf(toolName: String): String = when {
+    toolName.equals("bash", true) || toolName.equals("execute", true) -> "bash"
+    toolName.equals("edit", true) || toolName.equals("write", true) -> "edit"
+    toolName.equals("read", true) -> "read"
+    else -> "other"
+}
+
+/** 补丁片段渲染（+绿/-红/上下文灰，官方 file_diff structuredPatch 的简化）。 */
+@Composable
+private fun DiffHunksView(hunks: List<com.zai.zcode.core.protocol.v4.PatchHunk>, modifier: Modifier = Modifier) {
+    Column(
+        modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF16181D))
+            .padding(6.dp),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        hunks.take(3).forEach { hunk ->
+            Text(
+                "@@ -${hunk.oldStart}",
+                style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace, fontSize = 9.sp),
+                color = Color(0xFF6E9CD2),
+            )
+            hunk.lines.take(24).forEach { line ->
+                Text(
+                    line.ifEmpty { " " },
+                    style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace, fontSize = 9.sp),
+                    color = when {
+                        line.startsWith("+") -> Color(0xFF9AD8AE)
+                        line.startsWith("-") -> Color(0xFFE0A2A6)
+                        else -> Color(0xFF7F8794)
+                    },
+                    maxLines = 1,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }

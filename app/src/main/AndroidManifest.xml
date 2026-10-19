@@ -12,12 +12,18 @@
         android:name="android.hardware.camera.any"
         android:required="false" />
 
-    <!-- Android 11+ 包可见性：检测并拉起 UU 远程（uuremote scheme）必须显式声明 -->
+    <!-- Android 11+ 包可见性：检测并拉起 UU 远程（uuremote scheme）必须显式声明。
+         修复依据（用户报「已安装后点重新检测没反应」）：检测逻辑（UuRemoteModels.kt
+         isInstalled）是「scheme URI resolveActivity 优先 + 包名 getPackageInfo 兜底」
+         双路径，但这里只声明了 scheme 的 intent query——包名兜底缺少 <package> 声明，
+         Android 11+ 上 getPackageInfo 抛 NameNotFoundException 被 runCatching 吞成
+         false，检测恒 NotInstalled。补上包名声明让兜底路径真正可用。 -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="uuremote" />
         </intent>
+        <package android:name="com.netease.uuremote" />
     </queries>
 
     <application
@@ -46,6 +52,25 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 修复依据（BUG-008 P0，真机 2026-10-19）：同一 intent-filter 内的多个
+                 <data> 会被 Android 做跨属性维度合并——/bind、/control 的 pathPrefix
+                 约束作用到整个 filter，导致无 path 的 zcode://remote 匹配失败、而
+                 zcode://remote/bind 反而错误命中。拆成 3 个独立 filter 后各 filter
+                 的约束互不污染（实测矩阵见 docs/testing/BUG_TRACKING.md BUG-008）。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <!-- path="" 限定：只匹配无 path 的 zcode://remote（含 ?query），
+                     排除 zcode://remote/bind 之类的错误命中（BUG-008 实测矩阵）。 -->
+                <data
+                    android:host="remote"
+                    android:path=""
+                    android:scheme="zcode" />
+            </intent-filter>
+            <!-- UU 远程绑定回跳（对应 UuRemoteLinks.BIND_CALLBACK） -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
 
@@ -53,13 +78,17 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:host="remote"
-                    android:scheme="zcode" />
-                <!-- UU 远程绑定/远控回跳（对应 UuRemoteLinks.BIND_CALLBACK / CONTROL_CALLBACK） -->
-                <data
                     android:host="uuremote"
                     android:pathPrefix="/bind"
                     android:scheme="zcode" />
+            </intent-filter>
+            <!-- UU 远程远控回跳（对应 UuRemoteLinks.CONTROL_CALLBACK） -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
                 <data
                     android:host="uuremote"
                     android:pathPrefix="/control"

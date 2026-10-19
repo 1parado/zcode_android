@@ -1,6 +1,7 @@
 package com.zai.zcode.feature.render
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -58,14 +59,17 @@ import com.zai.zcode.core.markdown.MdSpan
 @Composable
 fun MdBlockView(block: MdBlock, modifier: Modifier = Modifier) {
     when (block) {
-        is MdBlock.Paragraph -> MdParagraph(block, modifier)
-        is MdBlock.Heading -> MdHeading(block, modifier)
+        // 修复依据（用户报「AI 回复不能选中文字复制」，官方桌面/Web 端可选中）：
+        // 文本类块包 SelectionContainer 启用系统级长按选择手柄 + 复制菜单；代码块
+        // 已有整块复制按钮不参与（避免长按与代码横滚手势冲突）；表格/分隔线无意义。
+        is MdBlock.Paragraph -> SelectionContainer { MdParagraph(block, modifier) }
+        is MdBlock.Heading -> SelectionContainer { MdHeading(block, modifier) }
         is MdBlock.CodeBlock -> MdCode(block, modifier)
-        is MdBlock.Quote -> MdQuote(block, modifier)
-        is MdBlock.ListBlock -> MdList(block, modifier)
+        is MdBlock.Quote -> SelectionContainer { MdQuote(block, modifier) }
+        is MdBlock.ListBlock -> SelectionContainer { MdList(block, modifier) }
         is MdBlock.Table -> MdTable(block, modifier)
         is MdBlock.Divider -> MdDivider(modifier)
-        is MdBlock.MathBlock -> MdMathBlockView(block, modifier)
+        is MdBlock.MathBlock -> SelectionContainer { MdMathBlockView(block, modifier) }
     }
 }
 

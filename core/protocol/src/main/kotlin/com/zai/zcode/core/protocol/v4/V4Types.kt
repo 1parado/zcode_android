@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -57,6 +58,34 @@ object V4 {
     const val METHOD_GIT_LOCAL_BRANCHES = "getLocalBranches"
     const val METHOD_GIT_SWITCH_BRANCH = "switchBranch"
     const val METHOD_GIT_SUMMARY = "getWorkspaceRepositoryInfo"
+    /** git.refresh（官方审查面板数据源：未暂存/已暂存/分支比较三组文件列表）。 */
+    const val METHOD_GIT_REFRESH = "refresh"
+    /** git.getDiff（审查面板展开文件时的单文件 patch）。 */
+    const val METHOD_GIT_GET_DIFF = "getDiff"
+    /** git.createBranchAndSwitch（官方分支选择器「创建并检出新分支...」）。 */
+    const val METHOD_GIT_CREATE_BRANCH = "createBranchAndSwitch"
+    /** git.getCommitGraph（官方「Git 图谱」）。 */
+    const val METHOD_GIT_COMMIT_GRAPH = "getCommitGraph"
+    /** git 写操作（官方 GitActionMenu：commit/push/stage/unstage/discard/AI message）。 */
+    const val METHOD_GIT_COMMIT = "commit"
+    const val METHOD_GIT_PUSH = "push"
+    const val METHOD_GIT_STAGE = "stagePaths"
+    const val METHOD_GIT_UNSTAGE = "unstagePaths"
+    const val METHOD_GIT_DISCARD = "discardPaths"
+    const val METHOD_GIT_GENERATE_COMMIT_MESSAGE = "generateCommitMessage"
+
+    /** skills catalog（官方 composer `/` 面板；channel 方法名=服务接口方法名，非 CLI wire 名）。 */
+    const val METHOD_SKILLS_REFERENCE_CATALOG = "getSkillReferenceCatalog"
+    /** 会话附件读（channel 方法名=服务接口方法名 conversationAttachmentReadV4）。 */
+    const val METHOD_CONVERSATION_ATTACHMENT_READ = "conversationAttachmentReadV4"
+    /** 附件上传三段事务（服务接口方法名；CLI wire 名带斜杠路径，只在 CLI 内部使用）。 */
+    const val METHOD_ATTACHMENT_BEGIN = "attachmentBeginV4"
+    const val METHOD_ATTACHMENT_CHUNK = "attachmentChunkV4"
+    const val METHOD_ATTACHMENT_COMMIT = "attachmentCommitV4"
+    const val METHOD_ATTACHMENT_ABORT = "attachmentAbortV4"
+    /** workspace-config topic 订阅（`/` 面板命令目录的官方数据源，conflated 推送流）。 */
+    const val METHOD_WORKSPACE_CONFIG_SUBSCRIBE = "subscribeWorkspaceConfigV4"
+    const val METHOD_WORKSPACE_CONFIG_UNSUBSCRIBE = "unsubscribeWorkspaceConfigV4"
 
     /**
      * 终端（channels.ts:95 Terminal: "terminal"）。
@@ -438,10 +467,15 @@ fun buildSendTextPayload(
     text: String,
     inputOrigin: String = "mobile",
     requestedDelivery: String? = null,
+    attachments: List<JsonObject> = emptyList(),
 ): JsonObject = buildJsonObject {
     put("text", text)
     put("inputOrigin", inputOrigin)
     if (requestedDelivery != null) put("requestedDelivery", requestedDelivery)
+    // 附件（官方 sendText payload attachments，command.ts:95；已上传的 {ref,fileName,mime}）
+    if (attachments.isNotEmpty()) {
+        put("attachments", buildJsonArray { attachments.forEach { add(it) } })
+    }
 }
 
 fun buildCreateSessionPayload(
@@ -487,6 +521,62 @@ class RowView(val raw: JsonObject) {
     /** toolCall 用：inputStreaming / pendingApproval / running / success / error / cancelled。 */
     val status: String? get() = raw["status"].asStringOrNull()
 
+    // ── toolCall 专属渲染数据（rows.ts:203-232 / toolDisplay.ts，官方工具卡同源）──
+
+    /** 终态输出全文（head+tail 截断；output.text）。 */
+    val outputText: String?
+        get() = raw["output"]?.asObjectOrNull()?.get("text").asStringOrNull()
+
+    /** 结构化展示载荷 kind（toolResultDisplaySchema：bash_output/file_diff/cua/...）。 */
+    val outputDisplayKind: String?
+        get() = raw["output"]?.asObjectOrNull()?.get("display")?.asObjectOrNull()?.get("kind").asStringOrNull()
+
+    /** bash_output：{output, truncated, outputPath?}（bash/execute 工具终态）。 */
+    val bashOutput: String?
+        get() = raw["output"]?.asObjectOrNull()?.get("display")?.asObjectOrNull()
+            ?.get("output").asStringOrNull()
+
+    /** file_diff：文件路径 + 增删行数（edit/write 工具）。 */
+    val diffFilePath: String?
+        get() = raw["output"]?.asObjectOrNull()?.get("display")?.asObjectOrNull()
+            ?.get("filePath").asStringOrNull()
+    val diffAdditions: Int?
+        get() = raw["output"]?.asObjectOrNull()?.get("display")?.asObjectOrNull()
+            ?.get("additions").asIntOrNull()
+    val diffDeletions: Int?
+        get() = raw["output"]?.asObjectOrNull()?.get("display")?.asObjectOrNull()
+            ?.get("deletions").asIntOrNull()
+    /** structuredPatch（edit 工具的补丁片段，渲染 diff 行）。 */
+    val structuredPatch: List<PatchHunk>
+        get() = (raw["output"]?.asObjectOrNull()?.get("display")?.asObjectOrNull()
+            ?.get("structuredPatch") as? JsonArray)?.mapNotNull { el ->
+            (el as? JsonObject)?.let { h ->
+                PatchHunk(
+                    oldStart = h["oldStart"].asIntOrNull() ?: 0,
+                    lines = (h["lines"] as? JsonArray)?.mapNotNull { it.asStringOrNull() } ?: emptyList(),
+                )
+            }
+        } ?: emptyList()
+
+    /** 运行中进度（MCP notifications/progress 投影）：previewLine/fraction/message。 */
+    val progressPreviewLine: String?
+        get() = raw["progress"]?.asObjectOrNull()?.get("previewLine").asStringOrNull()
+    val progressFraction: Float?
+        get() = (raw["progress"]?.asObjectOrNull()?.get("fraction").asLongOrNull())?.toFloat()
+            ?: raw["progress"]?.asObjectOrNull()?.get("fraction").toString().toFloatOrNull()
+
+    /** Bash 运行中有界预览（executionOutputPreviewSchema）。 */
+    val outputPreviewText: String?
+        get() = raw["outputPreview"]?.asObjectOrNull()?.get("text").asStringOrNull()
+    val outputPreviewTotalLines: Int?
+        get() = raw["outputPreview"]?.asObjectOrNull()?.get("totalLines").asIntOrNull()
+
+    /** 失败码与信息（status=error 必带）。 */
+    val errorCode: String?
+        get() = raw["error"]?.asObjectOrNull()?.get("code").asStringOrNull()
+    val errorMessage: String?
+        get() = raw["error"]?.asObjectOrNull()?.get("message").asStringOrNull()
+
     // subagent
     val childSessionId: String? get() = raw["childSessionId"].asStringOrNull()
     val subagentType: String? get() = raw["subagentType"].asStringOrNull()
@@ -494,6 +584,23 @@ class RowView(val raw: JsonObject) {
 
     // userInput
     val inputOrigin: String? get() = raw["inputOrigin"].asStringOrNull()
+    // assistantText：同一模型 response 的正文与工具共享此 ID（feedback/fork 的 entityId）
+    val assistantResponseId: String? get() = raw["assistantResponseId"].asStringOrNull()
+
+    /**
+     * userInput 附件（rows.ts attachmentRefSchema：{ref, fileName, mime, bytes}）——
+     * 图片附件在聊天流显示缩略图（官方 ConversationRowView attachmentKind=media）。
+     */
+    val attachments: List<AttachmentRefView>
+        get() = (raw["attachments"] as? JsonArray)?.mapNotNull { el ->
+            (el as? JsonObject)?.let { a ->
+                AttachmentRefView(
+                    ref = a["ref"].asStringOrNull() ?: return@mapNotNull null,
+                    fileName = a["fileName"].asStringOrNull() ?: "",
+                    mime = a["mime"].asStringOrNull() ?: "",
+                )
+            }
+        } ?: emptyList()
 
     // turnHeader：每轮文件改动摘要（rows.ts fileChanges）。只有 fileChanges 存在才有意义。
     val fileChangeAdditions: Int? get() = raw["fileChanges"].asObjectOrNull()?.get("additions").asIntOrNull()
@@ -529,6 +636,14 @@ class RowView(val raw: JsonObject) {
     /** turnHeader 的权威工时（排除等待），用于「已工作 12s」折叠卡。 */
     val activeMs: Long? get() = raw["activeMs"].asLongOrNull()
 }
+
+/** attachmentRefSchema 投影（attachment-ref.ts:5-15 子集）。 */
+class AttachmentRefView(val ref: String, val fileName: String, val mime: String) {
+    val isImage: Boolean get() = mime.startsWith("image/")
+}
+
+/** file_diff structuredPatch 的补丁片段（diff lines 带 +/-/空格前缀）。 */
+class PatchHunk(val oldStart: Int, val lines: List<String>)
 
 /**
  * ConversationDelta 的判别访问。op 集合封闭（10-protocol-spec §4.5）；

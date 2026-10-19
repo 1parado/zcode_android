@@ -27,6 +27,12 @@ data class ServerInfo(
         val path: String,
         val label: String?,
         val workspaceIdentity: String? = null,
+        // 修复依据（用户报「/ 面板无响应 + 上传 The path argument undefined」）：relay
+        // bootstrap 的 workspace target 带 remoteSessionId（web-remote-control.ts:27-28，
+        // 官方 useSkills 经 useWorkspaceServicesResolution 全程携带）——缺它 host 无法把
+        // catalog/attachment 路由到远端 attachment 的 CLI，转而 spawn 新进程并在
+        // prepareRuntimeState 崩溃（host 日志 path.join(undefined)）。
+        val remoteSessionId: String? = null,
     ) {
         /** 服务端 key 归一：`workspaceIdentity?.trim() || workspacePath`。 */
         val key: String get() = com.zai.zcode.core.protocol.v4.workspaceKeyOf(path, workspaceIdentity)
@@ -47,6 +53,8 @@ data class ServerInfo(
                         path = path,
                         label = (w["label"] as? JsonPrimitive)?.takeIf { p -> p !is JsonNull && p.isString }?.content,
                         workspaceIdentity = (w["workspaceIdentity"] as? JsonPrimitive)
+                            ?.takeIf { p -> p !is JsonNull && p.isString }?.content,
+                        remoteSessionId = (w["remoteSessionId"] as? JsonPrimitive)
                             ?.takeIf { p -> p !is JsonNull && p.isString }?.content,
                     )
                 }

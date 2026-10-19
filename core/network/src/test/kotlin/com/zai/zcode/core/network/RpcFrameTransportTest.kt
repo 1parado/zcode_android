@@ -1,12 +1,13 @@
 package com.zai.zcode.core.network
 
 import com.zai.zcode.core.protocol.v4.crc32WireBytes
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runTest
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Assert.assertArrayEquals
@@ -18,6 +19,9 @@ import java.util.Base64
 /**
  * 分片重组完整性回归（评审 Finding #3）：本端发送方恒带 crc32 checksum，缺失 checksum 的
  * 帧必须被拒绝、不得免校验放行，否则损坏/被篡改的物理帧会直通到 V4 解析层。
+ *
+ * 修复依据（BUG-010）：runTest 依赖 kotlinx-coroutines-test（build.gradle.kts 已补）；
+ * async/withTimeoutOrNull 均在 runTest 协程作用域内调用（修复此前非协程上下文调用）。
  */
 class RpcFrameTransportTest {
 
@@ -50,7 +54,10 @@ class RpcFrameTransportTest {
         val t = transport()
         val data = "hello".toByteArray()
         // SharedFlow replay=0，须先订阅再喂帧，否则 first() 永远等不到已发出的帧。
-        val received = async { t.messages.first() }
+        // 订阅等待必须挂在真实时间调度器（Dispatchers.Default）上：transport 的
+        // emit 用自己的 scope（默认调度器、真实时间），而 runTest 是虚拟时间——
+        // await 挂在虚拟调度器上会让虚拟时钟瞬间跑完 1s 超时，真实 emit 尚未发生。
+        val received = async(Dispatchers.Default) { t.messages.first() }
         val accepted = t.acceptPayload(frame(crc32WireBytes(data), data))
         assertTrue(accepted)
         assertArrayEquals(data, withTimeoutOrNull(1_000) { received.await() })

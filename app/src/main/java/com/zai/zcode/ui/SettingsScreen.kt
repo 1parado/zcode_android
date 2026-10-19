@@ -38,6 +38,11 @@ import com.zai.zcode.core.design.ZcodeSpacing
 import com.zai.zcode.core.design.ZcodeType
 import com.zai.zcode.core.network.ZcodeConnection
 import com.zai.zcode.core.protocol.v4.ZcodeProtocolV4
+import com.zai.zcode.ui.usage.DailyModelTrendChart
+import com.zai.zcode.ui.usage.ModelUsageDonut
+import com.zai.zcode.ui.usage.UsageHeatmap
+import com.zai.zcode.ui.usage.UsageRangeTabs
+import com.zai.zcode.ui.usage.formatTokensCn
 
 /**
  * 设置页（独立路由）。
@@ -61,13 +66,24 @@ fun SettingsScreen(
 
     // 账号 + 使用统计：进入页面时拉一次（只读展示，失败静默显示占位）
     var account by remember { mutableStateOf<ZcodeProtocolV4.AccountInfo?>(null) }
+    // 官方双快照模式（AppUsagePanel.tsx:37-38）：lifetime("all") 用于热力图与摘要条，
+    // range 快照（7d/30d）用于趋势图与模型环形图——随切换重拉。
+    var lifetime by remember { mutableStateOf<ZcodeProtocolV4.AppUsageSnapshot?>(null) }
     var usage by remember { mutableStateOf<ZcodeProtocolV4.AppUsageSnapshot?>(null) }
+    var usageRange by remember { mutableStateOf("7d") }
     LaunchedEffect(connected) {
         val p = connection.protocol.value ?: return@LaunchedEffect
         account = runCatching { p.cachedAccount() }.getOrNull()
-        // 修复依据（用户截图官方桌面端「18.7 亿累计」）：官方使用统计页默认展示
-        // 全时段累计；此前拉 "7d" 与官方口径不一致。改 all。
-        usage = runCatching { p.appUsageSnapshot("all") }.getOrNull()
+        lifetime = runCatching { p.appUsageSnapshot("all") }.getOrNull()
+        usage = lifetime
+    }
+    LaunchedEffect(connected, usageRange) {
+        if (usageRange == "all") {
+            usage = lifetime
+            return@LaunchedEffect
+        }
+        val p = connection.protocol.value ?: return@LaunchedEffect
+        usage = runCatching { p.appUsageSnapshot(usageRange) }.getOrNull()
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -135,33 +151,57 @@ fun SettingsScreen(
                 }
             }
 
-            // ── 使用统计（全时段累计，agent 数据库真实数据；对齐官方桌面默认口径）──
+            // ── 使用统计（官方双快照口径：摘要/热力图=all lifetime，趋势图/环形图=range）──
             SectionTitle("使用统计")
             if (usage != null) {
+                // 时段切换（官方 AppUsageRangeTabs：仅 7d/30d 两档，all 用于摘要）
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    UsageRangeTabs(current = usageRange) { usageRange = it }
+                }
+                val lifetimeSnap = lifetime
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
                 ) {
-                    UsageStatCell(Modifier.weight(1f), "${formatTokens(usage!!.totalTokens)}", "总 tokens")
-                    UsageStatCell(Modifier.weight(1f), "${usage!!.totalSessions}", "会话")
+                    UsageStatCell(Modifier.weight(1f), formatTokensCn(lifetimeSnap?.totalTokens ?: usage!!.totalTokens), "累计 Token 数")
+                    UsageStatCell(Modifier.weight(1f), formatTokensCn(lifetimeSnap?.peakDayTokens ?: usage!!.peakDayTokens), "峰值 Token 数")
                 }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
                 ) {
-                    UsageStatCell(Modifier.weight(1f), "${usage!!.totalTurns}", "对话轮次")
+                    UsageStatCell(Modifier.weight(1f), "${lifetimeSnap?.currentStreakDays ?: usage!!.currentStreakDays} 天", "当前连续天数")
+                    UsageStatCell(Modifier.weight(1f), "${lifetimeSnap?.longestStreakDays ?: usage!!.longestStreakDays} 天", "最长连续天数")
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(ZcodeSpacing.sm),
+                ) {
+                    UsageStatCell(Modifier.weight(1f), "${usage!!.totalSessions}", "会话")
                     UsageStatCell(Modifier.weight(1f), "${usage!!.activeDays}", "活跃天数")
                 }
+                Spacer(Modifier.height(ZcodeSpacing.sm))
+
+                // Token 活动热力图（lifetime heatmap，官方不随 range 变）
+                UsageHeatmap(heatmap = lifetimeSnap?.heatmap ?: usage!!.heatmap)
+
+                // 每日模型趋势折线（官方 AppUsageDailyModelTrendChart，随 range 变）
+                if (usage!!.dailyModelUsage.isNotEmpty()) {
+                    Spacer(Modifier.height(ZcodeSpacing.sm))
+                    DailyModelTrendChart(snapshot = usage!!)
+                }
+
+                // 模型用量环形图（真实 models 数据，随 range 变）
+                if (usage!!.models.isNotEmpty()) {
+                    Spacer(Modifier.height(ZcodeSpacing.sm))
+                    ModelUsageDonut(models = usage!!.models)
+                }
+
                 usage!!.avgTimeToFirstTokenMs?.let { ttft ->
                     SettingRow(label = "平均首字延迟", value = "${ttft / 1000.0}s")
-                }
-                // 模型用量 Top 列表（官方桌面「模型用量」环形的移动端文本形态：
-                // 模型名 + tokens + 占比；share 是 0~1 比例）
-                usage!!.models.take(5).forEach { m ->
-                    SettingRow(
-                        label = m.modelId.substringAfterLast("/"),
-                        value = "${formatTokens(m.totalTokens)} · ${(m.share * 100).toInt()}%",
-                    )
                 }
             } else {
                 Text(
@@ -228,12 +268,8 @@ private fun UsageStatCell(modifier: Modifier, value: String, label: String) {
     }
 }
 
-/** token 数展示：k/M 缩写（官方同款量级格式）。 */
-private fun formatTokens(n: Long): String = when {
-    n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)
-    n >= 1_000 -> "%.1fk".format(n / 1_000.0)
-    else -> n.toString()
-}
+/** token 数中文量级展示（亿/万，对齐官方「18.7 亿」口径）——实现在 usage 包。 */
+private fun formatTokens(n: Long): String = formatTokensCn(n)
 
 @Composable
 private fun SettingRow(label: String, value: String) {

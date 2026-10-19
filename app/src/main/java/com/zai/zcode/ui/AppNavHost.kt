@@ -52,6 +52,8 @@ fun AppNavHost(connection: ZcodeConnection) {
             ChatScreen(
                 onBack = { nav.popBackStack() },
                 onWatchScreen = { nav.navigate(Routes.UU_REMOTE) },
+                // fork 出的子会话原地导航（官方 SessionPane forkAssistant ack 后切换）
+                onOpenSession = { sessionId -> nav.navigate(Routes.chat(sessionId)) },
             )
         }
         composable(Routes.UU_REMOTE) {

@@ -111,6 +111,9 @@ fun SessionsScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
+        // 会话搜索状态（官方 TaskSearchDialog：标题+摘要过滤；声明在顶栏 toggle 之前）
+        var searchQuery by remember { mutableStateOf("") }
+        var showSearch by remember { mutableStateOf(false) }
         // 顶栏：标题 + 设置（触控重设计：DeviceChip 从顶栏挤窄的位置移出，改为
         // 下方整行工作区选择卡——用户报「工作区按钮太不好点」，被标题挤压后
         // 触达区不足 40dp；整行卡片点击面积是原来的 ~8 倍，官方移动端同样是
@@ -134,6 +137,9 @@ fun SessionsScreen(
                         zc.attention
                     },
                 )
+            }
+            IconButton(onClick = { showSearch = !showSearch; if (!showSearch) searchQuery = "" }) {
+                Icon(Icons.Rounded.Search, contentDescription = "搜索会话", tint = zc.textSecondary)
             }
             IconButton(onClick = { viewModel.openDraftSession() }) {
                 Icon(Icons.Rounded.Add, contentDescription = "新建会话", tint = zc.text)
@@ -211,6 +217,42 @@ fun SessionsScreen(
         // EmptyState("暂无任务") 把三种完全不同的事实混成一张脸——runtime 没起来在等、
         // 订阅失败、真的没会话。先看加载态，再看列表内容。
         val listState by viewModel.listState.collectAsState()
+        // 会话搜索（官方 TaskSearchDialog 的移动端近似：标题+摘要本地过滤；服务端
+        // queryTaskList 走 SQLite LIKE，移动端订阅快照里已有 title/preview，本地过滤
+        // 不加协议面且无网络往返）
+        if (showSearch) {
+            androidx.compose.material3.OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ZcodeSpacing.screenPadding),
+                singleLine = true,
+                placeholder = { Text("搜索会话（标题与摘要）", style = ZcodeType.uiSm, color = zc.textTertiary) },
+                shape = ZcodeShape.input,
+                trailingIcon = {
+                    Icon(
+                        Icons.Rounded.Close,
+                        contentDescription = "关闭搜索",
+                        modifier = Modifier
+                            .clickable {
+                                searchQuery = ""
+                                showSearch = false
+                            }
+                            .padding(8.dp),
+                        tint = zc.textTertiary,
+                    )
+                },
+            )
+            Spacer(Modifier.height(ZcodeSpacing.xs))
+        }
+        val filteredSessions = remember(sessions, searchQuery) {
+            if (searchQuery.isBlank()) sessions
+            else sessions.filter {
+                it.title.contains(searchQuery, ignoreCase = true) ||
+                    it.preview?.contains(searchQuery, ignoreCase = true) == true
+            }
+        }
         if (!listStateLoaded(listState, sessions)) {
             SessionListPlaceholder(
                 listState = listState,
@@ -221,7 +263,7 @@ fun SessionsScreen(
             )
         } else {
             val nowEpochDay = LocalDate.now().toEpochDay()
-            val sections = SessionsOrdering.groupByRecency(sessions, nowEpochDay)
+            val sections = SessionsOrdering.groupByRecency(filteredSessions, nowEpochDay)
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(

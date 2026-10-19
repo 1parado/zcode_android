@@ -20,6 +20,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -48,6 +50,7 @@ fun UuRemoteScreen(
     viewModel: UuRemoteViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val recheckEvents by viewModel.recheckEvents.collectAsState()
     val zc = LocalZcodeColors.current
     val context = LocalContext.current
     val activity = context as? Activity
@@ -55,6 +58,13 @@ fun UuRemoteScreen(
     // 每次进入/回到本页时重新校验安装与绑定状态
     LaunchedEffect(Unit) {
         viewModel.onScreenResumed(UuRemoteInstallationChecker.isInstalled(context))
+    }
+
+    // 「重新检测」点击反馈（用户报「点了没反应」）：检测后仍未安装时给一条提示，
+    // 不再让点击悄无声息。recheckEvents 首值 0 跳过（对应 onResume 的首次检测）。
+    var showNotDetected by remember { androidx.compose.runtime.mutableStateOf(false) }
+    LaunchedEffect(recheckEvents) {
+        if (recheckEvents > 0) showNotDetected = true
     }
 
     Column(
@@ -95,9 +105,17 @@ fun UuRemoteScreen(
                 SecondaryButton(
                     label = "我已安装，重新检测",
                     onClick = {
+                        showNotDetected = false
                         viewModel.onScreenResumed(UuRemoteInstallationChecker.isInstalled(context))
                     },
                 )
+                if (showNotDetected) {
+                    Text(
+                        "未检测到 UU 远程。若刚安装完成，请确认是从应用市场安装的正版（包名 com.netease.uuremote），再点重新检测。",
+                        style = ZcodeType.uiSm,
+                        color = zc.error,
+                    )
+                }
             }
 
             UuRemoteUiState.NotBound, UuRemoteUiState.Binding -> PrimaryButton(

@@ -1,6 +1,7 @@
 package com.zai.zcode.feature.sessions.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,12 +19,22 @@ import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.round
+
 import androidx.compose.ui.unit.dp
 import com.zai.zcode.core.design.LocalZcodeColors
 import com.zai.zcode.core.design.ZcodeShape
@@ -56,13 +67,31 @@ fun TaskCard(
 ) {
     val zc = LocalZcodeColors.current
     val status = item.toStatus()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(zc.card, ZcodeShape.card)
-            // 修复依据（docs/ui-design.md §7 果冻按压）：任务卡是列表里最高频的点击目标，
-            // 按下立即缩到 0.96 再弹簧回弹，触达确认早于 ripple。
-            .jellyClickable(onClick = onClick, onLongClick = onLongClick, onClickLabel = item.title)
+    // 菜单跟随手指（用户报「卡片固定在屏幕左上不跟手」）：jellyClickable 负责点击/
+    // 长按判定，旁路 pointerInput 只记录按下位置（不消费事件，不影响原有手势），
+    // 菜单出现时定位到落点（右移 8dp 防贴边）。Box 让 DropdownMenu 明确锚定卡片
+    // 本体——原先它是 Column 的兄弟节点，锚点解析落空才固定在屏幕左上。
+    var pressPos by remember { mutableStateOf(Offset.Zero) }
+    Box {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(zc.card, ZcodeShape.card)
+                // 修复依据（docs/ui-design.md §7 果冻按压）：任务卡是列表里最高频的点击目标，
+                // 按下立即缩到 0.96 再弹簧回弹，触达确认早于 ripple。
+                .jellyClickable(onClick = onClick, onLongClick = onLongClick, onClickLabel = item.title)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            pressPos = down.position
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.changes.all { !it.pressed }) break
+                            }
+                        }
+                    }
+                }
             // 修复依据（真机 v0.2.19）：stale 行只有落盘索引，标题与时间可信、实时状态不可知。
             // 逐卡降饱和而不是整屏降——同一列表里 runtime 在线的行保持原样，用户一眼能
             // 分清"哪些是实时的、哪些是上次见到的"。
@@ -163,24 +192,32 @@ fun TaskCard(
         }
     }
 
-    // 长按菜单：置顶 / 归档 / 删除（官方任务卡右键菜单的移动端形态）
-    if (showMenu) {
-        androidx.compose.material3.DropdownMenu(
-            expanded = showMenu,
-            onDismissRequest = onDismissMenu,
-        ) {
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text(if (item.pinned) "取消置顶" else "置顶", style = ZcodeType.uiSm) },
-                onClick = { onDismissMenu(); onTogglePin() },
-            )
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text("归档", style = ZcodeType.uiSm) },
-                onClick = { onDismissMenu(); onArchive() },
-            )
-            androidx.compose.material3.DropdownMenuItem(
-                text = { Text("删除", style = ZcodeType.uiSm, color = zc.error) },
-                onClick = { onDismissMenu(); onDelete() },
-            )
+        // 长按预览卡（原 DropdownMenu 升级）：置顶/归档/删除操作并入预览卡。
+        // Popup 锚定卡片 Box，相对落点定位；Popup 定位时纵向优先显示在落点上方，
+        // 空间不足时 Compose 自动换到下方（alignment + offset 语义），不会被屏幕裁切。
+        if (showMenu) {
+            androidx.compose.ui.window.Popup(
+                alignment = Alignment.TopStart,
+                offset = androidx.compose.ui.unit.IntOffset(
+                    x = 0,
+                    y = with(LocalDensity.current) {
+                        // 落点上方 40dp：预览卡底边大致贴着手指，不遮住被按的那一行
+                        (pressPos.y.toDp() - 40.dp).roundToPx().coerceAtLeast(0)
+                    },
+                ),
+                onDismissRequest = onDismissMenu,
+            ) {
+                SessionPreviewCard(
+                    item = item,
+                    relativeTime = relativeTime,
+                    absoluteTime = absoluteTime,
+                    onOpen = { onDismissMenu(); onClick() },
+                    onDismiss = onDismissMenu,
+                    onArchive = { onDismissMenu(); onArchive() },
+                    onDelete = { onDismissMenu(); onDelete() },
+                    onTogglePin = { onTogglePin() },
+                )
+            }
         }
     }
 }
@@ -192,7 +229,7 @@ fun TaskCard(
  * phase。此时按落盘 status 给 done/error，其余一律"已完成"而不是"排队"——排队暗示
  * "它正等着被执行"，而事实只是"电脑端没在跑，我不知道"。不谎报状态。
  */
-private fun SessionsRepository.SessionItem.toStatus(): ZcodeStatus = when {
+internal fun SessionsRepository.SessionItem.toStatus(): ZcodeStatus = when {
     hasPendingInteraction -> ZcodeStatus.Attention
     // stale 判定必须排在 phase 判定之前：落盘 status 写着"在跑"只代表它上次落盘
     // 时在跑，而现在电脑端没在跑。给它一个跳动的绿点等于告诉用户"正在输出"，
@@ -208,7 +245,7 @@ private fun SessionsRepository.SessionItem.toStatus(): ZcodeStatus = when {
 }
 
 @Composable
-private fun statusLabel(item: SessionsRepository.SessionItem): String = when {
+internal fun statusLabel(item: SessionsRepository.SessionItem): String = when {
     item.hasPendingInteraction -> "需要你"
     // 与 [toStatus] 同序：stale 优先于 phase。落盘 status 的"在跑"是过去时，
     // 现在没有 runtime 视图，只能说"已结束"，不能沿用"运行中"。
@@ -223,7 +260,7 @@ private fun statusLabel(item: SessionsRepository.SessionItem): String = when {
 }
 
 @Composable
-private fun statusColor(status: ZcodeStatus): Color = when (status) {
+internal fun statusColor(status: ZcodeStatus): Color = when (status) {
     ZcodeStatus.Running -> LocalZcodeColors.current.running
     ZcodeStatus.Attention -> LocalZcodeColors.current.attention
     ZcodeStatus.Error -> LocalZcodeColors.current.error
