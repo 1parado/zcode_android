@@ -137,17 +137,49 @@ object UuRemoteLinks {
     const val CONTROL_URL = "uuremote://external/device/control"
 }
 
-/** 检测 UU 远程是否安装（resolveActivity uuremote scheme）。 */
+/**
+ * 检测 UU 远程是否安装。
+ *
+ * 修复依据（真机：安装后仍显示未安装）：华为等厂商 ROM 对无 authority 的
+ * scheme URI（uuremote://external）resolveActivity 可能误报 null——而带 path 的
+ * 协议 URI（官方 guide 2.1 的 authorize 地址）实测能解析到 DeepLinkActivity。
+ * 双路径检测：协议 URI 优先；都解析不到时按官方 guide §1.5 的建议直接查
+ * 正式包名 com.netease.uuremote（guide 明确「包名可用于安装引导」，检测兜底
+ * 用包名存在性比误报"未安装"更不伤体验——误报会让用户卡在引导页无法进入）。
+ */
 object UuRemoteInstallationChecker {
+    private const val UU_PACKAGE = "com.netease.uuremote"
+
     fun isInstalled(context: Context): Boolean {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("uuremote://external"))
-        return intent.resolveActivity(context.packageManager) != null
+        // 1) 官方协议 URI（带 path，与实际拉起用的 intent 同形）
+        for (uri in listOf(
+            "uuremote://external/device/authorize",
+            "uuremote://external/device/control",
+            "uuremote://external",
+        )) {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+            if (intent.resolveActivity(context.packageManager) != null) return true
+        }
+        // 2) 包名兜底（guide §1.5：正式包名 com.netease.uuremote）
+        return runCatching {
+            context.packageManager.getPackageInfo(UU_PACKAGE, 0)
+            true
+        }.getOrDefault(false)
     }
 
-    /** 引导到应用市场搜索页（无精确市场包名约束，交给系统分发）。 */
+    /** 引导到应用市场（优先精确包名的市场详情页，失败退搜索页）。 */
     fun openMarket(context: Context) {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=UU远程"))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { context.startActivity(intent) }
+        val detail = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("market://details?id=$UU_PACKAGE"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { context.startActivity(detail) }.isFailure) {
+            runCatching {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=UU远程"))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }
     }
 }

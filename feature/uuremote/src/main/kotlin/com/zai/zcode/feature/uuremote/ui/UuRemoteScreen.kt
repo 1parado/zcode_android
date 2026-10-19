@@ -85,10 +85,20 @@ fun UuRemoteScreen(
         )
 
         when (val s = state) {
-            UuRemoteUiState.NotInstalled -> PrimaryButton(
-                label = "安装 UU 远程",
-                onClick = { viewModel.installGuide(context) },
-            )
+            UuRemoteUiState.NotInstalled -> {
+                PrimaryButton(
+                    label = "安装 UU 远程",
+                    onClick = { viewModel.installGuide(context) },
+                )
+                // 修复依据（用户报「装了之后还是显示没安装」）：从市场装完回到本页
+                // 时 LaunchedEffect(Unit) 不会重跑——提供手动重检入口。
+                SecondaryButton(
+                    label = "我已安装，重新检测",
+                    onClick = {
+                        viewModel.onScreenResumed(UuRemoteInstallationChecker.isInstalled(context))
+                    },
+                )
+            }
 
             UuRemoteUiState.NotBound, UuRemoteUiState.Binding -> PrimaryButton(
                 label = "绑定电脑",

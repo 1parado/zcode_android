@@ -65,7 +65,9 @@ fun SettingsScreen(
     LaunchedEffect(connected) {
         val p = connection.protocol.value ?: return@LaunchedEffect
         account = runCatching { p.cachedAccount() }.getOrNull()
-        usage = runCatching { p.appUsageSnapshot("7d") }.getOrNull()
+        // 修复依据（用户截图官方桌面端「18.7 亿累计」）：官方使用统计页默认展示
+        // 全时段累计；此前拉 "7d" 与官方口径不一致。改 all。
+        usage = runCatching { p.appUsageSnapshot("all") }.getOrNull()
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -133,8 +135,8 @@ fun SettingsScreen(
                 }
             }
 
-            // ── 使用统计（近 7 天，agent 数据库真实数据）──
-            SectionTitle("使用统计 · 近 7 天")
+            // ── 使用统计（全时段累计，agent 数据库真实数据；对齐官方桌面默认口径）──
+            SectionTitle("使用统计")
             if (usage != null) {
                 Row(
                     Modifier.fillMaxWidth(),
@@ -150,11 +152,16 @@ fun SettingsScreen(
                     UsageStatCell(Modifier.weight(1f), "${usage!!.totalTurns}", "对话轮次")
                     UsageStatCell(Modifier.weight(1f), "${usage!!.activeDays}", "活跃天数")
                 }
-                usage!!.favoriteModel?.let { model ->
-                    SettingRow(label = "常用模型", value = model.substringAfterLast("/"))
-                }
                 usage!!.avgTimeToFirstTokenMs?.let { ttft ->
                     SettingRow(label = "平均首字延迟", value = "${ttft / 1000.0}s")
+                }
+                // 模型用量 Top 列表（官方桌面「模型用量」环形的移动端文本形态：
+                // 模型名 + tokens + 占比；share 是 0~1 比例）
+                usage!!.models.take(5).forEach { m ->
+                    SettingRow(
+                        label = m.modelId.substringAfterLast("/"),
+                        value = "${formatTokens(m.totalTokens)} · ${(m.share * 100).toInt()}%",
+                    )
                 }
             } else {
                 Text(

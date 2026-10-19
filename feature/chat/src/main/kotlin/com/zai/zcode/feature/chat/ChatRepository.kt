@@ -669,11 +669,28 @@ class ChatRepository(
     /**
      * 切换思考档位：复用 switchModelConfig（官方语义：thought 是模型配置的附属，
      * useDraftConfigControl.handleDraftSelectThought 与 model 一起写回同一命令）。
+     *
+     * 修复依据（用户报「切完档位/模型后回复完又变回默认、电脑端也没变」）：
+     * 此处此前读 preferredSelection——那是**全局默认偏好**，不是本会话当前选型。
+     * 会话已切到模型 X 后再切档位，命令仍以 GLM 的名义发出，把会话模型**切回
+     * GLM**——这正是「变回默认」的机制。当前选型必须读会话快照
+     * state.config.modelSelection（CLI 投影权威），preferred 只作最后兜底。
      */
     suspend fun switchThought(thought: String): Boolean {
-        // 需要当前 provider/model 才能发合法 switchModelConfig（schema 三字段必填）
-        val cur = loadCurrentSelection() ?: return false
-        return switchModel(cur.providerId, cur.modelId, thought)
+        val snap = reducer.snapshot(sessionId)
+        val sel = snap.topLevel?.get("state")?.asObjectOrNull()?.get("config")?.asObjectOrNull()
+            ?.get("modelSelection")?.asObjectOrNull()
+            ?: snap.state?.get("config")?.asObjectOrNull()
+                ?.get("modelSelection")?.asObjectOrNull()
+        val provider = sel?.get("providerId").asStringOrNull()
+        val model = sel?.get("modelId").asStringOrNull()
+        return if (provider != null && model != null) {
+            switchModel(provider, model, thought)
+        } else {
+            // 快照还没到（刚进会话）：退全局偏好
+            val cur = loadCurrentSelection() ?: return false
+            switchModel(cur.providerId, cur.modelId, thought)
+        }
     }
 
     // ── 队列管理（editQueueItem / reorderQueueItem / deleteQueueItem / setAutoDrain）──

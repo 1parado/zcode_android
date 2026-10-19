@@ -665,7 +665,22 @@ class ZcodeProtocolV4(
         val favoriteModel: String? =
             summaryObj["favoriteModel"]?.asObjectOrNull()
                 ?.get("modelId").asStringOrNull()
+
+        /** 模型用量列表（appUsageModelUsageSchema：模型/token/占比），按 share 降序。 */
+        val models: List<ModelUsage> =
+            (raw["models"] as? JsonArray)?.mapNotNull { el ->
+                (el as? JsonObject)?.let { m ->
+                    ModelUsage(
+                        modelId = m["modelId"].asStringOrNull() ?: "unknown",
+                        totalTokens = m["totalTokens"].asLongOrNull() ?: 0L,
+                        share = m["share"].asLongOrNull()?.toFloat()?.div(100f)
+                            ?: (m["share"].asStringOrNull()?.toFloatOrNull() ?: 0f),
+                    )
+                }
+            }?.sortedByDescending { it.share } ?: emptyList()
     }
+
+    class ModelUsage(val modelId: String, val totalTokens: Long, val share: Float)
 
     /**
      * 读当前 OAuth 账号信息（oauth 通道 restoreCachedSession：本地缓存展示态，
