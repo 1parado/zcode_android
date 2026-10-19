@@ -1043,14 +1043,25 @@ private fun BranchPickerSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
 private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
     val zc = LocalZcodeColors.current
     var cmd by remember { mutableStateOf("") }
-    val listState = rememberLazyListState()
     val output = viewModel.terminalOutput
+    // 输出按行拆分（LazyColumn 行级复用，长输出不卡）；key 用行号
+    val lines = remember(output) { output.split("\n") }
+    val listState = rememberLazyListState()
+    // 用户上滑看历史时暂停自动贴底（回到底部恢复跟随）
+    val atBottom by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()
+            last == null || last.index >= listState.layoutInfo.totalItemsCount - 2
+        }
+    }
 
     // 进入时创建 PTY（LaunchedEffect 只跑一次）
     LaunchedEffect(Unit) { viewModel.openTerminal() }
-    // 输出增长时贴底
-    LaunchedEffect(output.length) {
-        if (output.isNotEmpty()) listState.scrollToItem(Int.MAX_VALUE / 2, Int.MAX_VALUE)
+    // 输出增长且用户在底部时贴底
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty() && atBottom) {
+            listState.scrollToItem(lines.size - 1)
+        }
     }
 
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1065,17 +1076,17 @@ private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
                 )
             }
             Spacer(Modifier.height(ZcodeSpacing.sm))
-            // 输出区：黑色终端底（终端惯例）+ 等宽浅字
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 240.dp, max = 420.dp)
-                    .clip(ZcodeShape.inner)
-                    .background(Color(0xFF16181D))
-                    .padding(ZcodeSpacing.sm),
-            ) {
-                if (output.isEmpty()) {
-                    // 三态：错误（红字，可操作）/ 连接中 / 就绪
+            // 输出区：LazyColumn 可滚动（用户报「clear 后看不到内容/不能往下滑」——
+            // 原 Column+Text 超过 420dp 上限即截断）。黑色终端底（终端惯例）+ 等宽浅字。
+            if (lines.isEmpty() || (lines.size == 1 && lines[0].isEmpty())) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 240.dp, max = 420.dp)
+                        .clip(ZcodeShape.inner)
+                        .background(Color(0xFF16181D))
+                        .padding(ZcodeSpacing.sm),
+                ) {
                     if (viewModel.terminalError != null) {
                         Text(
                             "终端创建失败：" + (viewModel.terminalError ?: "") +
@@ -1090,10 +1101,20 @@ private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
                             color = Color(0xFF9AA0AA),
                         )
                     }
-                } else {
-                    SelectionContainer {
+                }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 240.dp, max = 420.dp)
+                        .clip(ZcodeShape.inner)
+                        .background(Color(0xFF16181D)),
+                    contentPadding = PaddingValues(ZcodeSpacing.sm),
+                ) {
+                    items(lines.size) { i ->
                         Text(
-                            output,
+                            lines[i],
                             style = ZcodeType.mono.copy(fontFamily = FontFamily.Monospace),
                             color = Color(0xFFD7DAE0),
                         )
@@ -1129,3 +1150,4 @@ private fun TerminalSheet(viewModel: ChatViewModel, onDismiss: () -> Unit) {
         }
     }
 }
+
